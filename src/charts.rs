@@ -204,10 +204,6 @@ pub fn generate_memory_sparkline(history: &VecDeque<f64>) -> crate::Result<Dynam
     generate_enhanced_sparkline(history, COLOR_MEM_LINE, CHART_WIDTH, CHART_HEIGHT)
 }
 
-pub fn generate_cache_sparkline(history: &VecDeque<f64>) -> crate::Result<DynamicImage> {
-    generate_enhanced_sparkline(history, COLOR_CACHE_LINE, CHART_WIDTH, CHART_HEIGHT)
-}
-
 pub fn generate_prompt_sparkline(history: &VecDeque<f64>) -> crate::Result<DynamicImage> {
     generate_enhanced_sparkline(history, COLOR_PROMPT_LINE, CHART_WIDTH, CHART_HEIGHT)
 }

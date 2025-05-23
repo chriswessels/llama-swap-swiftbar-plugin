@@ -1,5 +1,5 @@
 // Service configuration
-pub const LAUNCH_AGENT_LABEL: &str = "com.llamaswap.service";
+pub const LAUNCH_AGENT_LABEL: &str = "com.user.llama-swap";
 
 // API configuration
 pub const API_BASE_URL: &str = "http://127.0.0.1";
@@ -26,9 +26,7 @@ pub const COLOR_TPS_LINE: (u8, u8, u8) = (0, 255, 127);    // Spring green - Gen
 pub const COLOR_PROMPT_LINE: (u8, u8, u8) = (255, 215, 0); // Gold - Prompt speed
 pub const COLOR_MEM_LINE: (u8, u8, u8) = (0, 191, 255);    // Deep sky blue - Memory
 pub const COLOR_KV_CACHE_LINE: (u8, u8, u8) = (147, 112, 219); // Medium slate blue - KV cache
-pub const COLOR_CACHE_LINE: (u8, u8, u8) = (255, 165, 0);  // Orange - Legacy cache
 
 // Icon configuration
-pub const ICON_SIZE: u32 = 20;
 pub const STATUS_DOT_SIZE: u32 = 6;
 pub const STATUS_DOT_OFFSET: u32 = 2; // From bottom-right corner

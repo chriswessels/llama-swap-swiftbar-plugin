@@ -17,17 +17,38 @@ pub fn handle_command(command: &str) -> crate::Result<()> {
 fn start_service() -> crate::Result<()> {
     eprintln!("Starting Llama-Swap service...");
     
+    // First check if the service is installed
+    if !is_service_installed()? {
+        return Err("Service is not installed. Please install the Llama-Swap launch agent first.".into());
+    }
+    
+    let user_id = get_user_id()?;
+    let target_domain = format!("gui/{}", user_id);
+    let service_target = format!("{}/{}", target_domain, LAUNCH_AGENT_LABEL);
+    let plist_path = get_plist_path()?;
+    
+    // Enable the service
+    let _ = Command::new("launchctl")
+        .args(&["enable", &service_target])
+        .output();
+    
+    // Bootstrap the service
+    let _ = Command::new("launchctl")
+        .args(&["bootstrap", &target_domain, &plist_path])
+        .output();
+    
+    // Kickstart the service
     let output = Command::new("launchctl")
-        .args(&["start", LAUNCH_AGENT_LABEL])
+        .args(&["kickstart", "-kp", &service_target])
         .output()
-        .map_err(|e| format!("Failed to execute launchctl: {}", e))?;
+        .map_err(|e| format!("Failed to execute launchctl kickstart: {}", e))?;
     
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!("Failed to start service: {}", stderr).into());
     }
     
-    eprintln!("Service start command sent successfully");
+    eprintln!("Service started successfully");
     Ok(())
 }
 
@@ -35,17 +56,27 @@ fn start_service() -> crate::Result<()> {
 fn stop_service() -> crate::Result<()> {
     eprintln!("Stopping Llama-Swap service...");
     
-    let output = Command::new("launchctl")
-        .args(&["stop", LAUNCH_AGENT_LABEL])
-        .output()
-        .map_err(|e| format!("Failed to execute launchctl: {}", e))?;
+    // First check if the service is installed
+    if !is_service_installed()? {
+        return Err("Service is not installed. Please install the Llama-Swap launch agent first.".into());
+    }
     
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+    let user_id = get_user_id()?;
+    let service_target = format!("gui/{}/{}", user_id, LAUNCH_AGENT_LABEL);
+    
+    // Use bootout to stop the service (modern launchctl API)
+    let output = Command::new("launchctl")
+        .args(&["bootout", &service_target])
+        .output()
+        .map_err(|e| format!("Failed to execute launchctl bootout: {}", e))?;
+    
+    // bootout can return non-zero if service wasn't running, but that's ok
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !output.status.success() && !stderr.contains("No such process") {
         return Err(format!("Failed to stop service: {}", stderr).into());
     }
     
-    eprintln!("Service stop command sent successfully");
+    eprintln!("Service stopped successfully");
     Ok(())
 }
 
@@ -53,9 +84,17 @@ fn stop_service() -> crate::Result<()> {
 fn restart_service() -> crate::Result<()> {
     eprintln!("Restarting Llama-Swap service...");
     
-    // Try kickstart first (macOS 10.10+)
+    // First check if the service is installed
+    if !is_service_installed()? {
+        return Err("Service is not installed. Please install the Llama-Swap launch agent first.".into());
+    }
+    
+    let user_id = get_user_id()?;
+    let service_target = format!("gui/{}/{}", user_id, LAUNCH_AGENT_LABEL);
+    
+    // Try kickstart first (modern approach - kills and restarts in one command)
     let output = Command::new("launchctl")
-        .args(&["kickstart", "-k", &format!("gui/{}/{}", get_user_id()?, LAUNCH_AGENT_LABEL)])
+        .args(&["kickstart", "-kp", &service_target])
         .output();
     
     match output {
@@ -63,9 +102,19 @@ fn restart_service() -> crate::Result<()> {
             eprintln!("Service restarted successfully");
             return Ok(());
         }
-        _ => {
+        Ok(result) => {
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            eprintln!("Kickstart failed: {}", stderr);
             // Fallback to stop + start
-            eprintln!("Kickstart failed, falling back to stop+start");
+            eprintln!("Falling back to stop+start");
+            stop_service()?;
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            start_service()?;
+        }
+        Err(e) => {
+            eprintln!("Kickstart command failed: {}", e);
+            // Fallback to stop + start
+            eprintln!("Falling back to stop+start");
             stop_service()?;
             std::thread::sleep(std::time::Duration::from_millis(500));
             start_service()?;
@@ -87,6 +136,20 @@ fn get_user_id() -> crate::Result<String> {
     }
     
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Check if the Llama-Swap service is installed (launch agent plist exists)
+fn is_service_installed() -> crate::Result<bool> {
+    let plist_path = get_plist_path()?;
+    Ok(std::path::Path::new(&plist_path).exists())
+}
+
+/// Get the full path to the plist file
+fn get_plist_path() -> crate::Result<String> {
+    let home = std::env::var("HOME")
+        .map_err(|_| "Failed to get HOME directory")?;
+    
+    Ok(format!("{}/Library/LaunchAgents/{}.plist", home, LAUNCH_AGENT_LABEL))
 }
 
 /// Open log file in default text editor
