@@ -1,0 +1,33 @@
+// Service configuration
+pub const LAUNCH_AGENT_LABEL: &str = "com.llamaswap.service";
+pub const SERVICE_NAME: &str = "Llama-Swap";
+
+// API configuration
+pub const API_BASE_URL: &str = "http://127.0.0.1";
+pub const API_PORT: u16 = 8080;
+pub const API_TIMEOUT_SECS: u64 = 1;
+
+// Update timing
+pub const UPDATE_INTERVAL_SECS: u64 = 5;
+pub const STREAMING_MODE: bool = true;
+
+// Chart configuration
+pub const CHART_WIDTH: u32 = 60;
+pub const CHART_HEIGHT: u32 = 15;
+pub const HISTORY_SIZE: usize = 60; // 5 minutes at 5-second intervals
+
+// File paths (using home directory expansion)
+pub const LOG_FILE_PATH: &str = "~/Library/Logs/LlamaSwap.log";
+pub const CONFIG_FILE_PATH: &str = "~/.llamaswap/config.yaml";
+
+// Colors (RGB)
+pub const COLOR_RUNNING: (u8, u8, u8) = (0, 200, 83);    // Green
+pub const COLOR_STOPPED: (u8, u8, u8) = (213, 0, 0);     // Red
+pub const COLOR_TPS_LINE: (u8, u8, u8) = (0, 255, 127);  // Spring green
+pub const COLOR_MEM_LINE: (u8, u8, u8) = (0, 191, 255);  // Deep sky blue
+pub const COLOR_CACHE_LINE: (u8, u8, u8) = (255, 165, 0); // Orange
+
+// Icon configuration
+pub const ICON_SIZE: u32 = 20;
+pub const STATUS_DOT_SIZE: u32 = 6;
+pub const STATUS_DOT_OFFSET: u32 = 2; // From bottom-right corner

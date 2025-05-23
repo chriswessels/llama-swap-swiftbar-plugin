@@ -1,0 +1,35 @@
+[package]
+name = "llama-swap-swiftbar"
+version = "0.1.0"
+edition = "2021"
+authors = ["Llama-Swap Team"]
+description = "SwiftBar plugin for Llama-Swap service monitoring"
+
+[dependencies]
+# Menu bar integration - disable default tokio feature
+bitbar = { version = "0.7", default-features = false, features = ["base64", "image"] }
+
+# HTTP client for API calls - blocking mode only
+reqwest = { version = "0.11", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+
+# JSON parsing
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Image processing for charts and icons
+image = "0.24"
+
+# Signal handling for graceful shutdown
+ctrlc = "3.4"
+
+[profile.release]
+opt-level = "z"     # Optimize for size
+lto = true          # Enable Link Time Optimization
+codegen-units = 1   # Single codegen unit for better optimization
+strip = true        # Strip symbols for smaller binary
+panic = "abort"     # Smaller binary, no unwinding
+
+# Development profile for faster compilation
+[profile.dev]
+opt-level = 0
+debug = true
