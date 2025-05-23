@@ -129,9 +129,6 @@ impl MenuBuilder {
     }
     
     fn add_metrics_section(&mut self, history: &MetricsHistory, state: &PluginState) {
-        // Check for anomalies first
-        self.add_conditional_items(history);
-        
         // Section header
         let mut header = ContentItem::new("Performance Metrics");
         header = header.color("#666666").unwrap();
