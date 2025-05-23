@@ -1,6 +1,5 @@
 // Service configuration
 pub const LAUNCH_AGENT_LABEL: &str = "com.llamaswap.service";
-pub const SERVICE_NAME: &str = "Llama-Swap";
 
 // API configuration
 pub const API_BASE_URL: &str = "http://127.0.0.1";

@@ -170,9 +170,6 @@ impl MenuBuilder {
             self.items.push(item);
         }
         
-        // Queue Status (simple display, no sparkline needed)
-        self.add_queue_status_item(state);
-        
         // Memory with dropdown details
         if let Some(item) = self.create_metric_with_dropdown(
             "Memory",
@@ -184,84 +181,10 @@ impl MenuBuilder {
             self.items.push(item);
         }
         
-        
-        // Add statistics submenu
-        self.add_stats_submenu(history);
+        // Queue Status (simple display, no sparkline needed)
+        self.add_queue_status_item(state);
     }
-    
-    fn create_enhanced_metric_item<F, G>(
-        &self,
-        name: &str,
-        data: &std::collections::VecDeque<crate::models::TimestampedValue>,
-        chart_fn: F,
-        format_fn: G,
-        show_inline_stats: bool,
-        history: &crate::models::MetricsHistory,
-    ) -> Option<MenuItem>
-    where
-        F: Fn(&std::collections::VecDeque<f64>, bool) -> crate::Result<image::DynamicImage>,
-        G: Fn(f64) -> String,
-    {
-        let values = data.iter().map(|tv| tv.value).collect();
-        let insights = history.get_insights(data);
-        
-        // Build enhanced label with trend arrow and range context
-        let mut label = format!("{}: {}", name, format_fn(insights.current));
-        
-        // Add trend arrow with color
-        if insights.data_points >= 3 {
-            label.push_str(&format!(" {}", insights.trend.as_arrow()));
-        }
-        
-        // Add range context if we have enough data
-        let range_text = insights.range_text();
-        if !range_text.is_empty() {
-            label.push_str(&format!(" {}", range_text));
-        }
-        
-        // Add time context using actual timestamps
-        let time_text = if data.len() >= 2 {
-            let oldest = data.front().unwrap().timestamp;
-            let newest = data.back().unwrap().timestamp;
-            insights.time_context(oldest, newest)
-        } else if data.len() == 1 {
-            insights.time_context(0, 0) // Will return "(now)"
-        } else {
-            String::new()
-        };
-        
-        if !time_text.is_empty() {
-            label.push_str(&format!(" {}", time_text));
-        }
-        
-        // Add inline stats if requested
-        if show_inline_stats && data.len() > 1 {
-            let stats = calculate_stats_for_data(data);
-            label.push_str(&format!(" (avg: {:.1})", stats.mean));
-        }
-        
-        let mut item = ContentItem::new(label);
-        
-        // Apply trend color to the text
-        if insights.data_points >= 3 {
-            item = item.color(insights.trend.color()).unwrap();
-        }
-        
-        // Add anomaly indicator if detected
-        if insights.is_anomaly {
-            item = item.color("#FF6B35").unwrap(); // Orange for anomalies
-        }
-        
-        // Add enhanced sparkline chart
-        if let Ok(chart) = chart_fn(&values, insights.is_anomaly) {
-            if let Ok(chart_image) = icons::icon_to_menu_image(chart) {
-                item = item.image(chart_image).unwrap();
-            }
-        }
-        
-        Some(MenuItem::Content(item))
-    }
-    
+
     /// Create a metric item with enhanced sparkline and detailed dropdown submenu
     fn create_metric_with_dropdown<F, G>(
         &self,
@@ -415,28 +338,6 @@ impl MenuBuilder {
             
             queue_item = queue_item.sub(submenu_items);
             self.items.push(MenuItem::Content(queue_item));
-        }
-    }
-    
-    fn add_stats_submenu(&mut self, history: &MetricsHistory) {
-        let mut stats_items = vec![];
-        
-        // Token generation statistics
-        if !history.tps.is_empty() {
-            let stats = calculate_stats_for_data(&history.tps);
-            let mut header = ContentItem::new("Generation Speed Statistics");
-            header = header.color("#666666").unwrap();
-            stats_items.push(MenuItem::Content(header));
-            stats_items.push(MenuItem::Content(ContentItem::new(format!("  Avg Speed: {:.1} tok/s", stats.mean))));
-            stats_items.push(MenuItem::Content(ContentItem::new(format!("  Min: {:.1} tok/s", stats.min))));
-            stats_items.push(MenuItem::Content(ContentItem::new(format!("  Max: {:.1} tok/s", stats.max))));
-            stats_items.push(MenuItem::Content(ContentItem::new(format!("  Std Dev: {:.1}", stats.std_dev))));
-        }
-        
-        if !stats_items.is_empty() {
-            let mut stats_item = ContentItem::new("📊 View Statistics...");
-            stats_item = stats_item.sub(stats_items);
-            self.items.push(MenuItem::Content(stats_item));
         }
     }
     

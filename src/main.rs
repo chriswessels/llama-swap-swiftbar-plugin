@@ -111,18 +111,12 @@ fn run_streaming_mode() -> Result<()> {
     
     // Initialize state and output
     let mut state = PluginState::new()?;
-    let mut first_frame = true;
     
     // Main loop with shutdown check
     while running.load(Ordering::SeqCst) {
         let frame = render_frame(&mut state)?;
         
-        if first_frame {
-            print!("{}", frame);
-            first_frame = false;
-        } else {
-            print!("~~~\n{}", frame);
-        }
+        print!("~~~\n{}", frame);
         io::stdout().flush()?;
         
         // Interruptible sleep

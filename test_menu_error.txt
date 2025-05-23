@@ -1,5 +1,0 @@
-⚠️ Plugin Error
----
-Connection failed: timeout | color=#ff0000 font=Menlo size=11
----
-🔄 Retry | refresh=true
