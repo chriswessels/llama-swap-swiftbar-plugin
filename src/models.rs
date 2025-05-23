@@ -301,31 +301,79 @@ impl MetricsHistory {
         }
     }
     
-    /// High-performance trend calculation using last few points
+    /// Time-based trend calculation using 15-30 second window when available
     fn calculate_trend(&self, deque: &VecDeque<TimestampedValue>) -> Trend {
         let len = deque.len();
         if len < 3 {
             return Trend::Insufficient;
         }
         
-        // Use last 3-5 points for trend calculation
-        let sample_size = (len.min(5)).max(3);
-        let start_idx = len - sample_size;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
         
-        let points: Vec<f64> = deque.iter()
-            .skip(start_idx)
-            .map(|tv| tv.value)
-            .collect();
+        // Prefer 30-second window, fall back to 15-second, then minimum 3 points
+        let preferred_windows = [30u64, 15u64];
+        
+        for &window_secs in &preferred_windows {
+            let cutoff_time = now.saturating_sub(window_secs);
+            let window_points: Vec<&TimestampedValue> = deque.iter()
+                .filter(|tv| tv.timestamp >= cutoff_time)
+                .collect();
             
-        // Simple slope calculation: (last - first) / distance
-        let first = points[0];
-        let last = points[points.len() - 1];
-        let slope = (last - first) / (points.len() - 1) as f64;
+            if window_points.len() >= 3 {
+                return self.calculate_trend_from_points(&window_points, window_secs);
+            }
+        }
         
-        // Threshold-based trend detection
-        let threshold = (last + first) * 0.02; // 2% change threshold
+        // Fall back to using all available points if we have at least 3
+        let all_points: Vec<&TimestampedValue> = deque.iter().collect();
+        if all_points.len() >= 3 {
+            let time_span = all_points.last().unwrap().timestamp 
+                .saturating_sub(all_points.first().unwrap().timestamp);
+            return self.calculate_trend_from_points(&all_points, time_span.max(1));
+        }
         
-        if slope.abs() < threshold {
+        Trend::Insufficient
+    }
+    
+    fn calculate_trend_from_points(&self, points: &[&TimestampedValue], time_span_secs: u64) -> Trend {
+        if points.len() < 3 {
+            return Trend::Insufficient;
+        }
+        
+        let values: Vec<f64> = points.iter().map(|tv| tv.value).collect();
+        let first = values[0];
+        let last = values[values.len() - 1];
+        
+        // Check if all values are essentially the same (flat line)
+        let max_val = values.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+        let min_val = values.iter().fold(f64::INFINITY, |a, &b| a.min(b));
+        let value_range = max_val - min_val;
+        
+        // If range is tiny, it's definitely stable regardless of slope calculation
+        if value_range < f64::EPSILON * 10.0 {
+            return Trend::Stable;
+        }
+        
+        // Calculate slope over actual time (value change per second)
+        let time_span = time_span_secs.max(1) as f64;
+        let slope = (last - first) / time_span;
+        
+        // Adaptive thresholds based on value magnitude and time span
+        let value_magnitude = (first.abs() + last.abs()) / 2.0;
+        
+        // For trends, we want meaningful change over the time period
+        let relative_threshold = value_magnitude * 0.05 / time_span; // 5% change over time period
+        let absolute_threshold = 0.01 / time_span; // Minimum absolute change per second
+        let threshold = relative_threshold.max(absolute_threshold);
+        
+        // Require longer time spans for more sensitive detection
+        let time_factor = if time_span >= 30.0 { 1.0 } else { 1.5 }; // More conservative for short spans
+        let adjusted_threshold = threshold * time_factor;
+        
+        if slope.abs() < adjusted_threshold {
             Trend::Stable
         } else if slope > 0.0 {
             Trend::Increasing
