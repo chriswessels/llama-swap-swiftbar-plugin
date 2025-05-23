@@ -18,7 +18,7 @@ pub const MIN_STARTING_DURATION_SECS: u64 = 10;  // Minimum time in Starting mod
 // Chart configuration
 pub const CHART_WIDTH: u32 = 60;
 pub const CHART_HEIGHT: u32 = 15;
-pub const HISTORY_SIZE: usize = 60; // 5 minutes at 5-second intervals
+pub const HISTORY_SIZE: usize = 300; // 5 minutes at 1-second intervals (adaptive polling)
 
 // File paths (using home directory expansion)
 pub const LOG_FILE_PATH: &str = "~/Library/Logs/LlamaSwap.log";
