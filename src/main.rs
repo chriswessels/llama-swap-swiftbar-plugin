@@ -22,7 +22,6 @@ struct PluginState {
     http_client: Client,
     metrics_history: MetricsHistory,
     current_status: ServiceStatus,
-    is_first_iteration: bool,
     error_count: usize,
 }
 
@@ -40,7 +39,6 @@ impl PluginState {
             http_client,
             metrics_history,
             current_status: ServiceStatus::Unknown,
-            is_first_iteration: true,
             error_count: 0,
         })
     }
@@ -84,6 +82,11 @@ fn run() -> Result<()> {
     }
 }
 
+fn render_frame(state: &mut PluginState) -> Result<String> {
+    update_state(state);
+    menu::build_menu(state)
+}
+
 fn run_streaming_mode() -> Result<()> {
     // Set up shutdown flag
     let running = Arc::new(AtomicBool::new(true));
@@ -94,24 +97,21 @@ fn run_streaming_mode() -> Result<()> {
         r.store(false, Ordering::SeqCst);
     })?;
     
-    // Initialize state
+    // Initialize state and output
     let mut state = PluginState::new()?;
-    let stdout = io::stdout();
-    let mut stdout_handle = stdout.lock();
+    let mut first_frame = true;
     
     // Main loop with shutdown check
     while running.load(Ordering::SeqCst) {
-        if !state.is_first_iteration {
-            writeln!(stdout_handle, "~~~")?;
+        let frame = render_frame(&mut state)?;
+        
+        if first_frame {
+            print!("{}", frame);
+            first_frame = false;
         } else {
-            state.is_first_iteration = false;
+            print!("~~~\n{}", frame);
         }
-        
-        update_state(&mut state);
-        
-        let menu = menu::build_menu(&state)?;
-        write!(stdout_handle, "{}", menu)?;
-        stdout_handle.flush()?;
+        io::stdout().flush()?;
         
         // Interruptible sleep
         for _ in 0..constants::UPDATE_INTERVAL_SECS {
@@ -122,22 +122,14 @@ fn run_streaming_mode() -> Result<()> {
         }
     }
     
-    // Clean shutdown
     eprintln!("Plugin shutting down gracefully");
-    
     Ok(())
 }
 
 fn run_once() -> Result<()> {
     let mut state = PluginState::new()?;
-    
-    // Update state once
-    update_state(&mut state);
-    
-    // Generate and output menu
-    let menu = menu::build_menu(&state)?;
-    print!("{}", menu);
-    
+    let frame = render_frame(&mut state)?;
+    print!("{}", frame);
     Ok(())
 }
 
