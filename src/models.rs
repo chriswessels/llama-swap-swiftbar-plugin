@@ -168,19 +168,10 @@ pub struct MetricInsights {
     pub min: f64,
     pub max: f64,
     pub trend: Trend,
-    pub is_anomaly: bool,
     pub data_points: usize,
 }
 
-impl MetricInsights {
-    pub fn range_text(&self) -> String {
-        if self.data_points < 2 {
-            String::new()
-        } else {
-            format!("[{:.1}↔{:.1}]", self.min, self.max)
-        }
-    }
-    
+impl MetricInsights {    
     pub fn time_context(&self, oldest_timestamp: u64, newest_timestamp: u64) -> String {
         if self.data_points == 0 {
             String::new()
@@ -282,7 +273,6 @@ impl MetricsHistory {
                 min: 0.0,
                 max: 0.0,
                 trend: Trend::Insufficient,
-                is_anomaly: false,
                 data_points: 0,
             };
         }
@@ -302,15 +292,11 @@ impl MetricsHistory {
         // Calculate trend from last 3-5 points (or all if fewer)
         let trend = self.calculate_trend(deque);
         
-        // Simple anomaly detection: current value > 2x the recent average
-        let is_anomaly = self.detect_anomaly(deque, current);
-        
         MetricInsights {
             current,
             min,
             max,
             trend,
-            is_anomaly,
             data_points,
         }
     }

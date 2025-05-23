@@ -192,7 +192,7 @@ impl MenuBuilder {
         history: &crate::models::MetricsHistory,
     ) -> Option<MenuItem>
     where
-        F: Fn(&std::collections::VecDeque<f64>, bool) -> crate::Result<image::DynamicImage>,
+        F: Fn(&std::collections::VecDeque<f64>) -> crate::Result<image::DynamicImage>,
         G: Fn(f64) -> String,
     {
         if data.is_empty() {
@@ -232,13 +232,8 @@ impl MenuBuilder {
             item = item.color(insights.trend.color()).unwrap();
         }
         
-        // Add anomaly indicator if detected
-        if insights.is_anomaly {
-            item = item.color("#FF6B35").unwrap(); // Orange for anomalies
-        }
-        
         // Add enhanced sparkline chart
-        if let Ok(chart) = chart_fn(&values, insights.is_anomaly) {
+        if let Ok(chart) = chart_fn(&values) {
             if let Ok(chart_image) = icons::icon_to_menu_image(chart) {
                 item = item.image(chart_image).unwrap();
             }
@@ -275,13 +270,6 @@ impl MenuBuilder {
             };
             submenu_items.push(MenuItem::Content(
                 ContentItem::new(format!("Trend: {}", trend_desc)).color(insights.trend.color()).unwrap()
-            ));
-        }
-        
-        // Add anomaly warning if detected
-        if insights.is_anomaly {
-            submenu_items.push(MenuItem::Content(
-                ContentItem::new("⚠️ Anomaly detected").color("#FF6B35").unwrap()
             ));
         }
         
