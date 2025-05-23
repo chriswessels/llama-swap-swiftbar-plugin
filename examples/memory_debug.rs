@@ -1,7 +1,7 @@
-use sysinfo::{System, ProcessesToUpdate};
+use sysinfo::System;
 
 fn main() {
-    let mut system = System::new_all();
+    let system = System::new_all();
     
     println!("=== Process Memory Debug ===");
     println!("Total processes: {}\n", system.processes().len());

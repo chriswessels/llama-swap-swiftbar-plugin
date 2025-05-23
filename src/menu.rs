@@ -489,7 +489,6 @@ mod tests {
             current_status: status,
             metrics_history: MetricsHistory::new(),
             error_count: 0,
-            last_save_time: std::time::Instant::now(),
         }
     }
 }

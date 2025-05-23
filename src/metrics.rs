@@ -1,5 +1,4 @@
 use reqwest::blocking::Client;
-use sysinfo::System;
 use crate::models::{Metrics, RunningResponse, RunningModel};
 use crate::constants;
 use std::time::Duration;
@@ -114,8 +113,8 @@ fn get_llama_server_memory_mb() -> f64 {
     }
     
     // Fallback to sysinfo if ps fails
-    use sysinfo::{System, ProcessesToUpdate};
-    let mut system = System::new_all();
+    use sysinfo::System;
+    let system = System::new_all();
     
     let mut total_memory_kb = 0u64;
     for (_, process) in system.processes() {

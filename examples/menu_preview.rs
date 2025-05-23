@@ -71,7 +71,6 @@ fn create_mock_state_with_metrics() -> PluginState {
         current_status: ServiceStatus::Running,
         metrics_history: MetricsHistory::new(),
         error_count: 0,
-        last_save_time: std::time::Instant::now(),
     };
     
     // Add some mock metrics data

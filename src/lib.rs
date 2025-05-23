@@ -10,7 +10,6 @@ pub mod charts;
 pub mod metrics;
 pub mod commands;
 pub mod service;
-pub mod persistence;
 
 // Re-export error type
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -21,5 +20,4 @@ pub struct PluginState {
     pub current_status: ServiceStatus,
     pub metrics_history: MetricsHistory,
     pub error_count: u32,
-    pub last_save_time: std::time::Instant,
 }
