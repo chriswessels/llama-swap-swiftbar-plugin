@@ -6,6 +6,7 @@ mod charts;
 mod icons;
 mod commands;
 mod service;
+mod persistence;
 
 use crate::models::{MetricsHistory, ServiceStatus};
 use reqwest::blocking::Client;
@@ -23,6 +24,7 @@ struct PluginState {
     metrics_history: MetricsHistory,
     current_status: ServiceStatus,
     is_first_iteration: bool,
+    last_save_time: std::time::Instant,
 }
 
 impl PluginState {
@@ -31,13 +33,32 @@ impl PluginState {
         let http_client = Client::builder()
             .timeout(Duration::from_secs(constants::API_TIMEOUT_SECS))
             .build()?;
+        
+        // Try to load existing history
+        let metrics_history = persistence::load_metrics()
+            .unwrap_or_else(|e| {
+                eprintln!("Failed to load metrics history: {}", e);
+                MetricsHistory::new()
+            });
 
         Ok(Self {
             http_client,
-            metrics_history: MetricsHistory::new(),
+            metrics_history,
             current_status: ServiceStatus::Unknown,
             is_first_iteration: true,
+            last_save_time: std::time::Instant::now(),
         })
+    }
+    
+    fn save_if_needed(&mut self) {
+        // Save every 30 seconds
+        if self.last_save_time.elapsed() > Duration::from_secs(30) {
+            if let Err(e) = persistence::save_metrics(&self.metrics_history) {
+                eprintln!("Failed to save metrics: {}", e);
+            } else {
+                self.last_save_time = std::time::Instant::now();
+            }
+        }
     }
 }
 
@@ -103,6 +124,8 @@ fn run_streaming_mode() -> Result<()> {
         }
         
         update_state(&mut state);
+        state.save_if_needed();
+        
         let menu = menu::build_menu(&state)?;
         write!(stdout_handle, "{}", menu)?;
         stdout_handle.flush()?;
@@ -118,6 +141,12 @@ fn run_streaming_mode() -> Result<()> {
     
     // Clean shutdown
     eprintln!("Plugin shutting down gracefully");
+    
+    // Save final metrics
+    if let Err(e) = persistence::save_metrics(&state.metrics_history) {
+        eprintln!("Failed to save final metrics: {}", e);
+    }
+    
     Ok(())
 }
 

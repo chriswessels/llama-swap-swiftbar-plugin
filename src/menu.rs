@@ -88,10 +88,11 @@ fn generate_metrics_items(history: &crate::models::MetricsHistory) -> Vec<MenuIt
     items.push(MenuItem::Content(header));
     
     // Models loaded with sparkline
-    if let Some(&latest_models) = history.tps.back() {
-        if let Ok(sparkline) = charts::generate_tps_sparkline(&history.tps) {
+    if let Some(latest_models) = history.tps.back() {
+        let values = history.get_values(&history.tps);
+        if let Ok(sparkline) = charts::generate_tps_sparkline(&values) {
             if let Ok(chart_image) = icons::icon_to_menu_image(sparkline) {
-                let mut item = ContentItem::new(format!("Models Loaded: {:.0}", latest_models));
+                let mut item = ContentItem::new(format!("Models Loaded: {:.0}", latest_models.value));
                 item = item.image(chart_image).unwrap();
                 items.push(MenuItem::Content(item));
             }
@@ -99,10 +100,11 @@ fn generate_metrics_items(history: &crate::models::MetricsHistory) -> Vec<MenuIt
     }
     
     // Memory with sparkline
-    if let Some(&latest_mem) = history.memory_mb.back() {
-        if let Ok(sparkline) = charts::generate_memory_sparkline(&history.memory_mb) {
+    if let Some(latest_mem) = history.memory_mb.back() {
+        let values = history.get_values(&history.memory_mb);
+        if let Ok(sparkline) = charts::generate_memory_sparkline(&values) {
             if let Ok(chart_image) = icons::icon_to_menu_image(sparkline) {
-                let mut item = ContentItem::new(format!("Memory: {:.1} MB", latest_mem));
+                let mut item = ContentItem::new(format!("Memory: {:.1} MB", latest_mem.value));
                 item = item.image(chart_image).unwrap();
                 items.push(MenuItem::Content(item));
             }

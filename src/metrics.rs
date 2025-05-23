@@ -35,7 +35,10 @@ pub fn fetch_metrics(client: &Client) -> crate::Result<Metrics> {
     };
     
     // Convert to internal metrics format
-    Ok(metrics_response.into())
+    let mut metrics: Metrics = metrics_response.into();
+    metrics.validate()?;
+    
+    Ok(metrics)
 }
 
 /// Alternative: Check service status more explicitly
