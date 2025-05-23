@@ -2,12 +2,13 @@ use image::{DynamicImage, Rgba, RgbaImage};
 use crate::constants::*;
 use std::collections::VecDeque;
 
-/// Generate a sparkline chart from data points
-pub fn generate_sparkline(
+/// Generate an enhanced sparkline chart with semantic colors and reference lines
+pub fn generate_enhanced_sparkline(
     data: &VecDeque<f64>,
-    color: (u8, u8, u8),
+    base_color: (u8, u8, u8),
     width: u32,
     height: u32,
+    is_anomaly: bool,
 ) -> crate::Result<DynamicImage> {
     // Create transparent image
     let mut img = RgbaImage::from_pixel(width, height, Rgba([0, 0, 0, 0]));
@@ -19,7 +20,7 @@ pub fn generate_sparkline(
     
     // Calculate scaling factors
     let data_vec: Vec<f64> = data.iter().cloned().collect();
-    let (min_val, max_val) = calculate_bounds(&data_vec);
+    let (min_val, max_val) = calculate_bounds_smart(&data_vec);
     let value_range = max_val - min_val;
     
     // Handle edge case of flat line
@@ -36,8 +37,17 @@ pub fn generate_sparkline(
         0.0
     };
     
+    // Reference line removed for cleaner appearance
+    
+    // Choose color based on anomaly status
+    let line_color = if is_anomaly {
+        (255, 165, 0) // Orange for anomalies
+    } else {
+        base_color
+    };
+    
     // Draw the sparkline
-    draw_line_chart(&mut img, &data_vec, min_val, scale, x_step, color);
+    draw_enhanced_line_chart(&mut img, &data_vec, min_val, scale, x_step, line_color, is_anomaly);
     
     Ok(DynamicImage::ImageRgba8(img))
 }
@@ -52,14 +62,57 @@ fn calculate_bounds(data: &[f64]) -> (f64, f64) {
     (min - padding, max + padding)
 }
 
-/// Draw the line chart on the image
-fn draw_line_chart(
+/// Smart bounds calculation that handles single datapoints properly
+fn calculate_bounds_smart(data: &[f64]) -> (f64, f64) {
+    if data.is_empty() {
+        return (0.0, 1.0);
+    }
+    
+    if data.len() == 1 {
+        let value = data[0];
+        if value == 0.0 {
+            // Zero should be at bottom
+            (0.0, 1.0)
+        } else {
+            // Non-zero single point should be centered
+            let range = value.abs().max(1.0); // Ensure minimum range
+            (value - range, value + range)
+        }
+    } else {
+        // Multiple points - use normal bounds calculation
+        calculate_bounds(data)
+    }
+}
+
+/// Draw reference line (average or baseline)
+fn draw_reference_line(
+    img: &mut RgbaImage, 
+    value: f64, 
+    min_val: f64, 
+    scale: f64, 
+    width: u32
+) {
+    let height = img.height();
+    let y = height - 1 - ((value - min_val) * scale) as u32;
+    let y = y.min(height - 1);
+    
+    // Draw dotted reference line
+    for x in (0..width).step_by(3) {
+        if x < width {
+            img.put_pixel(x, y, Rgba([128, 128, 128, 128])); // Semi-transparent gray
+        }
+    }
+}
+
+/// Draw enhanced line chart with anomaly highlighting
+fn draw_enhanced_line_chart(
     img: &mut RgbaImage,
     data: &[f64],
     min_val: f64,
     scale: f64,
     x_step: f64,
     color: (u8, u8, u8),
+    is_anomaly: bool,
 ) {
     let height = img.height();
     
@@ -79,9 +132,18 @@ fn draw_line_chart(
         draw_line(img, window[0], window[1], color);
     }
     
-    // Optionally draw dots at data points for clarity
-    if data.len() <= 20 {
-        for &(x, y) in &points {
+    // Highlight the most recent point if it's an anomaly
+    if is_anomaly && !points.is_empty() {
+        let last_point = points[points.len() - 1];
+        draw_highlighted_dot(img, last_point.0, last_point.1, (255, 69, 0)); // Red-orange
+    }
+    
+    // Draw dots for sparse data or small charts
+    if data.len() <= 15 {
+        for (i, &(x, y)) in points.iter().enumerate() {
+            if i == points.len() - 1 && is_anomaly {
+                continue; // Already highlighted above
+            }
             draw_dot(img, x, y, color);
         }
     }
@@ -141,17 +203,51 @@ fn draw_dot(img: &mut RgbaImage, cx: u32, cy: u32, color: (u8, u8, u8)) {
     }
 }
 
-/// Helper to generate sparklines for specific metrics
-pub fn generate_tps_sparkline(history: &VecDeque<f64>) -> crate::Result<DynamicImage> {
-    generate_sparkline(history, COLOR_TPS_LINE, CHART_WIDTH, CHART_HEIGHT)
+/// Draw a highlighted dot for anomalies
+fn draw_highlighted_dot(img: &mut RgbaImage, cx: u32, cy: u32, color: (u8, u8, u8)) {
+    let radius = 2; // Larger for anomalies
+    let (width, height) = img.dimensions();
+    
+    for y in cy.saturating_sub(radius)..=(cy + radius).min(height - 1) {
+        for x in cx.saturating_sub(radius)..=(cx + radius).min(width - 1) {
+            let dx = x as i32 - cx as i32;
+            let dy = y as i32 - cy as i32;
+            if dx * dx + dy * dy <= radius as i32 * radius as i32 {
+                img.put_pixel(x, y, Rgba([color.0, color.1, color.2, 255]));
+            }
+        }
+    }
 }
 
-pub fn generate_memory_sparkline(history: &VecDeque<f64>) -> crate::Result<DynamicImage> {
-    generate_sparkline(history, COLOR_MEM_LINE, CHART_WIDTH, CHART_HEIGHT)
+/// Legacy function for backward compatibility
+pub fn generate_sparkline(
+    data: &VecDeque<f64>,
+    color: (u8, u8, u8),
+    width: u32,
+    height: u32,
+) -> crate::Result<DynamicImage> {
+    generate_enhanced_sparkline(data, color, width, height, false)
 }
 
-pub fn generate_cache_sparkline(history: &VecDeque<f64>) -> crate::Result<DynamicImage> {
-    generate_sparkline(history, COLOR_CACHE_LINE, CHART_WIDTH, CHART_HEIGHT)
+/// Helper to generate enhanced sparklines for specific metrics
+pub fn generate_tps_sparkline(history: &VecDeque<f64>, is_anomaly: bool) -> crate::Result<DynamicImage> {
+    generate_enhanced_sparkline(history, COLOR_TPS_LINE, CHART_WIDTH, CHART_HEIGHT, is_anomaly)
+}
+
+pub fn generate_memory_sparkline(history: &VecDeque<f64>, is_anomaly: bool) -> crate::Result<DynamicImage> {
+    generate_enhanced_sparkline(history, COLOR_MEM_LINE, CHART_WIDTH, CHART_HEIGHT, is_anomaly)
+}
+
+pub fn generate_cache_sparkline(history: &VecDeque<f64>, is_anomaly: bool) -> crate::Result<DynamicImage> {
+    generate_enhanced_sparkline(history, COLOR_CACHE_LINE, CHART_WIDTH, CHART_HEIGHT, is_anomaly)
+}
+
+pub fn generate_prompt_sparkline(history: &VecDeque<f64>, is_anomaly: bool) -> crate::Result<DynamicImage> {
+    generate_enhanced_sparkline(history, COLOR_PROMPT_LINE, CHART_WIDTH, CHART_HEIGHT, is_anomaly)
+}
+
+pub fn generate_kv_cache_sparkline(history: &VecDeque<f64>, is_anomaly: bool) -> crate::Result<DynamicImage> {
+    generate_enhanced_sparkline(history, COLOR_KV_CACHE_LINE, CHART_WIDTH, CHART_HEIGHT, is_anomaly)
 }
 
 #[cfg(test)]

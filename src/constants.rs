@@ -21,11 +21,13 @@ pub const LOG_FILE_PATH: &str = "~/Library/Logs/LlamaSwap.log";
 pub const CONFIG_FILE_PATH: &str = "~/.llamaswap/config.yaml";
 
 // Colors (RGB)
-pub const COLOR_RUNNING: (u8, u8, u8) = (0, 200, 83);    // Green
-pub const COLOR_STOPPED: (u8, u8, u8) = (213, 0, 0);     // Red
-pub const COLOR_TPS_LINE: (u8, u8, u8) = (0, 255, 127);  // Spring green
-pub const COLOR_MEM_LINE: (u8, u8, u8) = (0, 191, 255);  // Deep sky blue
-pub const COLOR_CACHE_LINE: (u8, u8, u8) = (255, 165, 0); // Orange
+pub const COLOR_RUNNING: (u8, u8, u8) = (0, 200, 83);      // Green
+pub const COLOR_STOPPED: (u8, u8, u8) = (213, 0, 0);       // Red
+pub const COLOR_TPS_LINE: (u8, u8, u8) = (0, 255, 127);    // Spring green - Generation speed
+pub const COLOR_PROMPT_LINE: (u8, u8, u8) = (255, 215, 0); // Gold - Prompt speed
+pub const COLOR_MEM_LINE: (u8, u8, u8) = (0, 191, 255);    // Deep sky blue - Memory
+pub const COLOR_KV_CACHE_LINE: (u8, u8, u8) = (147, 112, 219); // Medium slate blue - KV cache
+pub const COLOR_CACHE_LINE: (u8, u8, u8) = (255, 165, 0);  // Orange - Legacy cache
 
 // Icon configuration
 pub const ICON_SIZE: u32 = 20;

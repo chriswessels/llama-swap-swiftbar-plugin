@@ -73,6 +73,18 @@ fn parse_prometheus_metrics(text: &str) -> HashMap<String, f64> {
                 "llamacpp:requests_processing" => {
                     metrics.insert("requests_processing".to_string(), metric.value);
                 }
+                "llamacpp:requests_deferred" => {
+                    metrics.insert("requests_deferred".to_string(), metric.value);
+                }
+                "llamacpp:kv_cache_usage_ratio" => {
+                    metrics.insert("kv_cache_usage_ratio".to_string(), metric.value);
+                }
+                "llamacpp:kv_cache_tokens" => {
+                    metrics.insert("kv_cache_tokens".to_string(), metric.value);
+                }
+                "llamacpp:n_decode_total" => {
+                    metrics.insert("n_decode_total".to_string(), metric.value);
+                }
                 _ => {}
             }
         }
@@ -178,6 +190,11 @@ pub fn fetch_metrics(client: &Client) -> crate::Result<Metrics> {
     let mut total_prompt_tokens_per_sec = 0.0;
     let mut total_predicted_tokens_per_sec = 0.0;
     let mut total_requests_processing = 0u32;
+    let mut total_requests_deferred = 0u32;
+    let mut total_kv_cache_usage_ratio = 0.0;
+    let mut total_kv_cache_tokens = 0u32;
+    let mut total_n_decode_total = 0u32;
+    let mut active_models = 0;
     
     for model in &running_response.running {
         if model.state == "ready" {
@@ -186,14 +203,30 @@ pub fn fetch_metrics(client: &Client) -> crate::Result<Metrics> {
             total_prompt_tokens_per_sec += model_metrics.get("prompt_tokens_per_sec").unwrap_or(&0.0);
             total_predicted_tokens_per_sec += model_metrics.get("predicted_tokens_per_sec").unwrap_or(&0.0);
             total_requests_processing += *model_metrics.get("requests_processing").unwrap_or(&0.0) as u32;
+            total_requests_deferred += *model_metrics.get("requests_deferred").unwrap_or(&0.0) as u32;
+            total_kv_cache_usage_ratio += model_metrics.get("kv_cache_usage_ratio").unwrap_or(&0.0);
+            total_kv_cache_tokens += *model_metrics.get("kv_cache_tokens").unwrap_or(&0.0) as u32;
+            total_n_decode_total += *model_metrics.get("n_decode_total").unwrap_or(&0.0) as u32;
+            active_models += 1;
         }
     }
+    
+    // Average KV cache usage ratio across models
+    let avg_kv_cache_usage_ratio = if active_models > 0 {
+        total_kv_cache_usage_ratio / active_models as f64
+    } else {
+        0.0
+    };
     
     // Create metrics
     let mut metrics = Metrics {
         prompt_tokens_per_sec: total_prompt_tokens_per_sec,
         predicted_tokens_per_sec: total_predicted_tokens_per_sec,
         requests_processing: total_requests_processing,
+        requests_deferred: total_requests_deferred,
+        kv_cache_usage_ratio: avg_kv_cache_usage_ratio,
+        kv_cache_tokens: total_kv_cache_tokens,
+        n_decode_total: total_n_decode_total,
         memory_mb,
     };
     

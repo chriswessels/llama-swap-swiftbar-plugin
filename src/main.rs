@@ -18,11 +18,12 @@ use std::time::Duration;
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
-struct PluginState {
-    http_client: Client,
-    metrics_history: MetricsHistory,
-    current_status: ServiceStatus,
-    error_count: usize,
+pub struct PluginState {
+    pub http_client: Client,
+    pub metrics_history: MetricsHistory,
+    pub current_status: ServiceStatus,
+    pub current_metrics: Option<models::Metrics>,
+    pub error_count: usize,
 }
 
 impl PluginState {
@@ -39,6 +40,7 @@ impl PluginState {
             http_client,
             metrics_history,
             current_status: ServiceStatus::Unknown,
+            current_metrics: None,
             error_count: 0,
         })
     }
@@ -84,7 +86,17 @@ fn run() -> Result<()> {
 
 fn render_frame(state: &mut PluginState) -> Result<String> {
     update_state(state);
-    menu::build_menu(state)
+    
+    // Convert to menu PluginState
+    let menu_state = menu::PluginState {
+        http_client: state.http_client.clone(),
+        metrics_history: state.metrics_history.clone(),
+        current_status: state.current_status,
+        current_metrics: state.current_metrics.clone(),
+        error_count: state.error_count,
+    };
+    
+    menu::build_menu(&menu_state)
 }
 
 fn run_streaming_mode() -> Result<()> {
@@ -140,6 +152,7 @@ fn update_state(state: &mut PluginState) {
             // Service is running and responsive
             state.current_status = ServiceStatus::Running;
             state.metrics_history.push(&metrics);
+            state.current_metrics = Some(metrics);
         }
         Err(e) => {
             eprintln!("Metrics fetch failed: {}", e);

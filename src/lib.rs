@@ -14,10 +14,5 @@ pub mod service;
 // Re-export error type
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-// Define PluginState for library use
-#[derive(Debug)]
-pub struct PluginState {
-    pub current_status: ServiceStatus,
-    pub metrics_history: MetricsHistory,
-    pub error_count: u32,
-}
+// Re-export types from models
+pub use crate::models::Metrics;
