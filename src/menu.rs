@@ -43,29 +43,38 @@ fn generate_title_item(status: ServiceStatus) -> crate::Result<MenuItem> {
 
 fn generate_control_items(status: ServiceStatus) -> Vec<MenuItem> {
     let mut items = vec![];
+    let exe = std::env::current_exe().unwrap();
+    let exe_str = exe.to_str().unwrap();
     
+    // Start/Stop based on status
     match status {
         ServiceStatus::Running => {
             let mut item = ContentItem::new("🔴 Stop Llama-Swap");
-            let exe = std::env::current_exe().unwrap();
-            let exe_str = exe.to_str().unwrap();
             item = item.command(attr::Command::try_from((exe_str, "do_stop")).unwrap()).unwrap();
             items.push(MenuItem::Content(item));
         }
         ServiceStatus::Stopped | ServiceStatus::Unknown => {
             let mut item = ContentItem::new("🟢 Start Llama-Swap");
-            let exe = std::env::current_exe().unwrap();
-            let exe_str = exe.to_str().unwrap();
             item = item.command(attr::Command::try_from((exe_str, "do_start")).unwrap()).unwrap();
             items.push(MenuItem::Content(item));
         }
     }
     
+    // Always show restart
     let mut restart = ContentItem::new("⟲ Restart Llama-Swap");
-    let exe = std::env::current_exe().unwrap();
-    let exe_str = exe.to_str().unwrap();
     restart = restart.command(attr::Command::try_from((exe_str, "do_restart")).unwrap()).unwrap();
     items.push(MenuItem::Content(restart));
+    
+    items.push(MenuItem::Sep);
+    
+    // File operations
+    let mut view_logs = ContentItem::new("📄 View Logs");
+    view_logs = view_logs.command(attr::Command::try_from((exe_str, "view_logs")).unwrap()).unwrap();
+    items.push(MenuItem::Content(view_logs));
+    
+    let mut view_config = ContentItem::new("⚙️ View Config");
+    view_config = view_config.command(attr::Command::try_from((exe_str, "view_config")).unwrap()).unwrap();
+    items.push(MenuItem::Content(view_config));
     
     items
 }
@@ -78,11 +87,11 @@ fn generate_metrics_items(history: &crate::models::MetricsHistory) -> Vec<MenuIt
     header = header.color("#888888").unwrap();
     items.push(MenuItem::Content(header));
     
-    // TPS with sparkline
-    if let Some(&latest_tps) = history.tps.back() {
+    // Models loaded with sparkline
+    if let Some(&latest_models) = history.tps.back() {
         if let Ok(sparkline) = charts::generate_tps_sparkline(&history.tps) {
             if let Ok(chart_image) = icons::icon_to_menu_image(sparkline) {
-                let mut item = ContentItem::new(format!("TPS: {:.1}", latest_tps));
+                let mut item = ContentItem::new(format!("Models Loaded: {:.0}", latest_models));
                 item = item.image(chart_image).unwrap();
                 items.push(MenuItem::Content(item));
             }
@@ -100,16 +109,6 @@ fn generate_metrics_items(history: &crate::models::MetricsHistory) -> Vec<MenuIt
         }
     }
     
-    // Cache hit rate with sparkline
-    if let Some(&latest_cache) = history.cache_hit_rate.back() {
-        if let Ok(sparkline) = charts::generate_cache_sparkline(&history.cache_hit_rate) {
-            if let Ok(chart_image) = icons::icon_to_menu_image(sparkline) {
-                let mut item = ContentItem::new(format!("Cache Hit Rate: {:.1}%", latest_cache));
-                item = item.image(chart_image).unwrap();
-                items.push(MenuItem::Content(item));
-            }
-        }
-    }
     
     items
 }

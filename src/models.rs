@@ -9,15 +9,21 @@ pub enum ServiceStatus {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct RunningModel {
+    pub model: String,
+    pub state: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RunningResponse {
+    pub running: Vec<RunningModel>,
+}
+
+#[derive(Debug)]
 pub struct MetricsResponse {
-    pub tps: f64,
-    #[serde(rename = "memory_bytes")]
-    pub memory_bytes: u64,
-    #[serde(rename = "cache_hits")]
-    pub cache_hits: u64,
-    #[serde(rename = "cache_misses")]
-    pub cache_misses: u64,
-    // Additional fields can be added as needed
+    pub running_models: Vec<RunningModel>,
+    pub total_memory_bytes: u64,
+    pub model_count: usize,
 }
 
 #[derive(Debug)]
@@ -29,17 +35,10 @@ pub struct Metrics {
 
 impl From<MetricsResponse> for Metrics {
     fn from(resp: MetricsResponse) -> Self {
-        let total_cache = resp.cache_hits + resp.cache_misses;
-        let cache_hit_rate = if total_cache > 0 {
-            (resp.cache_hits as f64 / total_cache as f64) * 100.0
-        } else {
-            0.0
-        };
-
         Self {
-            tps: resp.tps,
-            memory_mb: resp.memory_bytes as f64 / 1_048_576.0, // Convert to MB
-            cache_hit_rate,
+            tps: resp.model_count as f64, // Use model count as a proxy for activity
+            memory_mb: resp.total_memory_bytes as f64 / 1_048_576.0, // Convert to MB
+            cache_hit_rate: 0.0, // Not available from llama-swap
         }
     }
 }

@@ -5,6 +5,7 @@ mod metrics;
 mod charts;
 mod icons;
 mod commands;
+mod service;
 
 use crate::models::{MetricsHistory, ServiceStatus};
 use reqwest::blocking::Client;
@@ -134,16 +135,27 @@ fn run_once() -> Result<()> {
 }
 
 fn update_state(state: &mut PluginState) {
-    // Try to fetch metrics
+    // Primary check: try to fetch metrics
     match metrics::fetch_metrics(&state.http_client) {
         Ok(metrics) => {
+            // Service is running and responsive
             state.current_status = ServiceStatus::Running;
             state.metrics_history.push(&metrics);
         }
-        Err(_) => {
-            // Service is likely down
-            state.current_status = ServiceStatus::Stopped;
-            // Don't update history when service is down
+        Err(e) => {
+            eprintln!("Metrics fetch failed: {}", e);
+            
+            // Secondary check: is service actually running?
+            if service::is_service_running(service::DetectionMethod::LaunchctlList) {
+                // Service is running but API is not responsive
+                state.current_status = ServiceStatus::Running;
+                eprintln!("Service is running but API is not responding");
+            } else {
+                // Service is truly stopped
+                state.current_status = ServiceStatus::Stopped;
+            }
+            
+            // Don't update history when we can't get real data
         }
     }
 }

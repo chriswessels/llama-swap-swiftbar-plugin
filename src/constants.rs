@@ -4,7 +4,7 @@ pub const SERVICE_NAME: &str = "Llama-Swap";
 
 // API configuration
 pub const API_BASE_URL: &str = "http://127.0.0.1";
-pub const API_PORT: u16 = 8080;
+pub const API_PORT: u16 = 45786;
 pub const API_TIMEOUT_SECS: u64 = 1;
 
 // Update timing
