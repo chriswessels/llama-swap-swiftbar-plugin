@@ -82,9 +82,10 @@ mod tests {
         
         // Add some test data
         let metrics = Metrics {
-            tps: 42.0,
+            prompt_tokens_per_sec: 524.0,
+            predicted_tokens_per_sec: 42.0,
+            requests_processing: 1,
             memory_mb: 1024.0,
-            cache_hit_rate: 95.0,
         };
         
         history.push(&metrics);
@@ -95,7 +96,7 @@ mod tests {
         // Load
         let loaded = load_metrics().unwrap();
         assert_eq!(loaded.tps.len(), 1);
-        assert_eq!(loaded.tps[0].value, 42.0);
+        assert_eq!(loaded.tps[0].value, 42.0); // generation speed from predicted_tokens_per_sec
         
         // Cleanup
         let _ = clear_persistence();

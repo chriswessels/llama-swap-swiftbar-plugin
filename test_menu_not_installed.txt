@@ -1,0 +1,4 @@
+⚪ Llama-Swap
+---
+Service not installed | color=#666666
+Visit documentation... | href=https://github.com/your-org/llama-swap

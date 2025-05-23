@@ -1,4 +1,4 @@
-use image::{DynamicImage, ImageBuffer, Rgba, RgbaImage};
+use image::{DynamicImage, Rgba, RgbaImage};
 use crate::constants::*;
 use crate::models::ServiceStatus;
 

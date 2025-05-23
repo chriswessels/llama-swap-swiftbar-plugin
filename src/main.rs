@@ -25,6 +25,7 @@ struct PluginState {
     current_status: ServiceStatus,
     is_first_iteration: bool,
     last_save_time: std::time::Instant,
+    error_count: usize,
 }
 
 impl PluginState {
@@ -47,6 +48,7 @@ impl PluginState {
             current_status: ServiceStatus::Unknown,
             is_first_iteration: true,
             last_save_time: std::time::Instant::now(),
+            error_count: 0,
         })
     }
     
@@ -173,6 +175,7 @@ fn update_state(state: &mut PluginState) {
         }
         Err(e) => {
             eprintln!("Metrics fetch failed: {}", e);
+            state.error_count += 1;
             
             // Secondary check: is service actually running?
             if service::is_service_running(service::DetectionMethod::LaunchctlList) {

@@ -5,6 +5,14 @@ edition = "2021"
 authors = ["Llama-Swap Team"]
 description = "SwiftBar plugin for Llama-Swap service monitoring"
 
+[lib]
+name = "llama_swap_swiftbar"
+path = "src/lib.rs"
+
+[[bin]]
+name = "llama-swap-swiftbar"
+path = "src/main.rs"
+
 [dependencies]
 # Menu bar integration - disable default tokio feature
 bitbar = { version = "0.7", default-features = false, features = ["base64", "image"] }
@@ -22,6 +30,9 @@ image = "0.24"
 # Signal handling for graceful shutdown
 ctrlc = "3.4"
 
+# System information for memory usage
+sysinfo = { version = "0.31", default-features = false, features = ["system", "apple-app-store"] }
+
 [profile.release]
 opt-level = "z"     # Optimize for size
 lto = true          # Enable Link Time Optimization
@@ -33,3 +44,7 @@ panic = "abort"     # Smaller binary, no unwinding
 [profile.dev]
 opt-level = 0
 debug = true
+
+[[example]]
+name = "menu_preview"
+required-features = []

@@ -9,6 +9,7 @@ pub fn handle_command(command: &str) -> crate::Result<()> {
         "do_restart" => restart_service(),
         "view_logs" => view_logs(),
         "view_config" => view_config(),
+        "show_memory_details" => show_memory_details(),
         _ => Err(format!("Unknown command: {}", command).into()),
     }
 }
@@ -130,4 +131,37 @@ fn expand_tilde(path: &str) -> crate::Result<String> {
     } else {
         Ok(path.to_string())
     }
+}
+
+/// Show detailed memory information via Activity Monitor
+fn show_memory_details() -> crate::Result<()> {
+    eprintln!("Opening Activity Monitor to show memory details...");
+    
+    // Open Activity Monitor and switch to Memory tab
+    let output = Command::new("open")
+        .args(&["-a", "Activity Monitor"])
+        .output()
+        .map_err(|e| format!("Failed to open Activity Monitor: {}", e))?;
+    
+    if !output.status.success() {
+        return Err("Failed to open Activity Monitor".into());
+    }
+    
+    // Try to switch to Memory tab using AppleScript
+    let script = r#"
+    tell application "Activity Monitor"
+        activate
+        tell application "System Events"
+            tell process "Activity Monitor"
+                click menu item "Memory" of menu "View" of menu bar 1
+            end tell
+        end tell
+    end tell
+    "#;
+    
+    let _ = Command::new("osascript")
+        .args(&["-e", script])
+        .output();
+    
+    Ok(())
 }

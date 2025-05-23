@@ -29,19 +29,27 @@ pub struct MetricsResponse {
 
 #[derive(Debug)]
 pub struct Metrics {
-    pub tps: f64,
-    pub memory_mb: f64,
-    pub cache_hit_rate: f64,
+    pub prompt_tokens_per_sec: f64,    // llamacpp:prompt_tokens_seconds
+    pub predicted_tokens_per_sec: f64, // llamacpp:predicted_tokens_seconds
+    pub requests_processing: u32,      // llamacpp:requests_processing
+    pub memory_mb: f64,               // From sysinfo
 }
 
 impl Metrics {
     /// Validate and sanitize metrics
     pub fn validate(&mut self) -> crate::Result<()> {
-        // TPS validation (using model count as proxy)
-        if self.tps < 0.0 {
-            self.tps = 0.0;
-        } else if self.tps > 1000.0 {
-            return Err("Model count unreasonably high".into());
+        // Prompt tokens per second validation
+        if self.prompt_tokens_per_sec < 0.0 {
+            self.prompt_tokens_per_sec = 0.0;
+        } else if self.prompt_tokens_per_sec > 10000.0 {
+            return Err("Prompt tokens per second unreasonably high".into());
+        }
+        
+        // Predicted tokens per second validation
+        if self.predicted_tokens_per_sec < 0.0 {
+            self.predicted_tokens_per_sec = 0.0;
+        } else if self.predicted_tokens_per_sec > 1000.0 {
+            return Err("Predicted tokens per second unreasonably high".into());
         }
         
         // Memory validation
@@ -51,9 +59,6 @@ impl Metrics {
             return Err("Memory value unreasonably high".into());
         }
         
-        // Cache hit rate validation
-        self.cache_hit_rate = self.cache_hit_rate.clamp(0.0, 100.0);
-        
         Ok(())
     }
 }
@@ -61,9 +66,10 @@ impl Metrics {
 impl From<MetricsResponse> for Metrics {
     fn from(resp: MetricsResponse) -> Self {
         Self {
-            tps: resp.model_count as f64, // Use model count as a proxy for activity
+            prompt_tokens_per_sec: 0.0, // Will be populated from Prometheus
+            predicted_tokens_per_sec: 0.0, // Will be populated from Prometheus
+            requests_processing: 0, // Will be populated from Prometheus
             memory_mb: resp.total_memory_bytes as f64 / 1_048_576.0, // Convert to MB
-            cache_hit_rate: 0.0, // Not available from llama-swap
         }
     }
 }
@@ -76,9 +82,9 @@ pub struct TimestampedValue {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MetricsHistory {
-    pub tps: VecDeque<TimestampedValue>,
+    pub tps: VecDeque<TimestampedValue>, // tokens per second (generation)
     pub memory_mb: VecDeque<TimestampedValue>,
-    pub cache_hit_rate: VecDeque<TimestampedValue>,
+    pub cache_hit_rate: VecDeque<TimestampedValue>, // we'll use prompt speed as proxy
     
     #[serde(skip)]
     pub max_size: usize,
@@ -111,9 +117,15 @@ impl MetricsHistory {
             .as_secs();
         
         // Add new values with timestamps
-        Self::push_value(&mut self.tps, metrics.tps, timestamp, self.max_size);
+        Self::push_value(&mut self.tps, metrics.predicted_tokens_per_sec, timestamp, self.max_size);
         Self::push_value(&mut self.memory_mb, metrics.memory_mb, timestamp, self.max_size);
-        Self::push_value(&mut self.cache_hit_rate, metrics.cache_hit_rate, timestamp, self.max_size);
+        // Use prompt speed as a proxy for cache efficiency (higher = better)
+        let cache_proxy = if metrics.prompt_tokens_per_sec > 0.0 {
+            (metrics.prompt_tokens_per_sec / 1000.0 * 100.0).min(100.0) // Convert to percentage
+        } else {
+            0.0
+        };
+        Self::push_value(&mut self.cache_hit_rate, cache_proxy, timestamp, self.max_size);
         
         // Clean old data
         self.trim_old_data();
