@@ -54,25 +54,38 @@ fn calculate_bounds(data: &[f64]) -> (f64, f64) {
     (min - padding, max + padding)
 }
 
-/// Smart bounds calculation that handles single datapoints properly
+/// Smart bounds calculation that centers data and maximizes use of chart space
 fn calculate_bounds_smart(data: &[f64]) -> (f64, f64) {
     if data.is_empty() {
         return (0.0, 1.0);
     }
     
-    if data.len() == 1 {
-        let value = data[0];
+    let min = data.iter().fold(f64::INFINITY, |a, &b| a.min(b));
+    let max = data.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+    let range = max - min;
+    
+    // Check if all values are the same (flat line)
+    if range.abs() < f64::EPSILON {
+        let value = min; // All values are the same
+        
         if value == 0.0 {
-            // Zero should be at bottom
+            // Zero should be at bottom for visual clarity
             (0.0, 1.0)
         } else {
-            // Non-zero single point should be centered
-            let range = value.abs().max(1.0); // Ensure minimum range
-            (value - range, value + range)
+            // Non-zero flat line: center it with reasonable padding
+            let padding = value.abs().max(1.0) * 0.5;
+            (value - padding, value + padding)
         }
     } else {
-        // Multiple points - use normal bounds calculation
-        calculate_bounds(data)
+        // Data has variance: center the range and use full chart height
+        let center = (min + max) / 2.0;
+        let half_range = range / 2.0;
+        
+        // Add small padding (5%) to avoid lines touching chart edges
+        let padding = half_range * 0.05;
+        let expanded_half_range = half_range + padding;
+        
+        (center - expanded_half_range, center + expanded_half_range)
     }
 }
 
