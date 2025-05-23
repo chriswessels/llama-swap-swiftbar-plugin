@@ -14,9 +14,34 @@ use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PollingMode {
+    Idle,       // Service running but no queue activity
+    Active,     // Requests being processed
+    Starting,   // Service state transitions
+}
+
+impl PollingMode {
+    pub fn interval_secs(&self) -> u64 {
+        match self {
+            PollingMode::Idle => constants::UPDATE_INTERVAL_SECS,
+            PollingMode::Active => constants::ACTIVE_INTERVAL_SECS,
+            PollingMode::Starting => constants::STARTING_INTERVAL_SECS,
+        }
+    }
+    
+    pub fn description(&self) -> &'static str {
+        match self {
+            PollingMode::Idle => "idle polling",
+            PollingMode::Active => "active polling", 
+            PollingMode::Starting => "transition polling",
+        }
+    }
+}
 
 pub struct PluginState {
     pub http_client: Client,
@@ -24,6 +49,9 @@ pub struct PluginState {
     pub current_status: ServiceStatus,
     pub current_metrics: Option<models::Metrics>,
     pub error_count: usize,
+    pub polling_mode: PollingMode,
+    pub last_status: ServiceStatus,
+    pub mode_change_time: Instant,
 }
 
 impl PluginState {
@@ -42,7 +70,70 @@ impl PluginState {
             current_status: ServiceStatus::Unknown,
             current_metrics: None,
             error_count: 0,
+            polling_mode: PollingMode::Starting, // Start with faster polling
+            last_status: ServiceStatus::Unknown,
+            mode_change_time: Instant::now(),
         })
+    }
+    
+    /// Update polling mode based on current metrics and status
+    fn update_polling_mode(&mut self) {
+        let new_mode = self.determine_polling_mode();
+        
+        if new_mode != self.polling_mode {
+            eprintln!("Polling mode: {} -> {} ({})", 
+                self.polling_mode.description(),
+                new_mode.description(),
+                self.get_mode_reason()
+            );
+            
+            self.polling_mode = new_mode;
+            self.mode_change_time = Instant::now();
+        }
+    }
+    
+    fn determine_polling_mode(&self) -> PollingMode {
+        // Handle service state transitions
+        if self.current_status != self.last_status {
+            return PollingMode::Starting;
+        }
+        
+        // Stay in Starting mode for at least 10 seconds after state change
+        if self.polling_mode == PollingMode::Starting && 
+           self.mode_change_time.elapsed() < Duration::from_secs(constants::MIN_STARTING_DURATION_SECS) {
+            return PollingMode::Starting;
+        }
+        
+        // Check if service is actively processing requests
+        if let Some(ref metrics) = self.current_metrics {
+            if metrics.requests_processing > 0 || metrics.requests_deferred > 0 {
+                return PollingMode::Active;
+            }
+        }
+        
+        // Default to idle when service is running but no queue activity
+        if self.current_status == ServiceStatus::Running {
+            PollingMode::Idle
+        } else {
+            PollingMode::Starting
+        }
+    }
+    
+    fn get_mode_reason(&self) -> String {
+        if self.current_status != self.last_status {
+            return format!("status changed: {:?} -> {:?}", self.last_status, self.current_status);
+        }
+        
+        if let Some(ref metrics) = self.current_metrics {
+            if metrics.requests_processing > 0 {
+                return format!("processing {} requests", metrics.requests_processing);
+            }
+            if metrics.requests_deferred > 0 {
+                return format!("{} requests queued", metrics.requests_deferred);
+            }
+        }
+        
+        "no queue activity".to_string()
     }
 }
 
@@ -112,24 +203,55 @@ fn run_streaming_mode() -> Result<()> {
     // Initialize state and output
     let mut state = PluginState::new()?;
     
-    // Main loop with shutdown check
+    eprintln!("Starting adaptive polling mode");
+    
+    // Main loop with adaptive timing
     while running.load(Ordering::SeqCst) {
+        let loop_start = Instant::now();
+        
+        // Render current frame
         let frame = render_frame(&mut state)?;
         
         print!("~~~\n{}", frame);
         io::stdout().flush()?;
         
-        // Interruptible sleep
-        for _ in 0..constants::UPDATE_INTERVAL_SECS {
-            if !running.load(Ordering::SeqCst) {
-                break;
+        // Determine sleep duration based on current mode
+        let sleep_duration = Duration::from_secs(state.polling_mode.interval_secs());
+        
+        // Adaptive interruptible sleep
+        adaptive_sleep(sleep_duration, &running);
+        
+        // Optional: Log timing for debugging
+        if cfg!(debug_assertions) {
+            let loop_duration = loop_start.elapsed();
+            if loop_duration > Duration::from_millis(500) {
+                eprintln!("Slow loop iteration: {:?} (mode: {})", 
+                    loop_duration, state.polling_mode.description());
             }
-            thread::sleep(Duration::from_secs(1));
         }
     }
     
     eprintln!("Plugin shutting down gracefully");
     Ok(())
+}
+
+/// Interruptible sleep that respects shutdown signal
+fn adaptive_sleep(duration: Duration, running: &Arc<AtomicBool>) {
+    let sleep_chunks = duration.as_secs().max(1); // At least 1 second chunks
+    let chunk_duration = Duration::from_secs(1);
+    
+    for _ in 0..sleep_chunks {
+        if !running.load(Ordering::SeqCst) {
+            break;
+        }
+        thread::sleep(chunk_duration);
+    }
+    
+    // Handle sub-second remainder
+    let remainder = duration - Duration::from_secs(sleep_chunks);
+    if remainder > Duration::ZERO && running.load(Ordering::SeqCst) {
+        thread::sleep(remainder);
+    }
 }
 
 fn run_once() -> Result<()> {
@@ -140,6 +262,9 @@ fn run_once() -> Result<()> {
 }
 
 fn update_state(state: &mut PluginState) {
+    // Store previous status for comparison
+    state.last_status = state.current_status;
+    
     // Primary check: try to fetch metrics
     match metrics::fetch_metrics(&state.http_client) {
         Ok(metrics) => {
@@ -147,6 +272,7 @@ fn update_state(state: &mut PluginState) {
             state.current_status = ServiceStatus::Running;
             state.metrics_history.push(&metrics);
             state.current_metrics = Some(metrics);
+            state.error_count = 0; // Reset error count on success
         }
         Err(e) => {
             eprintln!("Metrics fetch failed: {}", e);
@@ -162,7 +288,11 @@ fn update_state(state: &mut PluginState) {
                 state.current_status = ServiceStatus::Stopped;
             }
             
-            // Don't update history when we can't get real data
+            // Clear metrics when service is not responsive
+            state.current_metrics = None;
         }
     }
+    
+    // Update polling mode based on new state
+    state.update_polling_mode();
 }
