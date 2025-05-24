@@ -9,6 +9,7 @@ use std::collections::HashMap;
 struct PrometheusMetric {
     name: String,
     value: f64,
+    #[allow(dead_code)]
     labels: HashMap<String, String>,
 }
 
@@ -125,6 +126,7 @@ fn collect_system_metrics() -> SystemMetrics {
     let load_average_1m = get_load_average();
         
     // GPU metrics removed - powermetrics was too expensive and unreliable
+    // Disk usage removed - not essential for core functionality
     
     SystemMetrics {
         cpu_usage_percent,
@@ -164,37 +166,6 @@ fn get_load_average() -> Option<f64> {
         })
 }
 
-/// Get disk usage using df command (macOS/Unix)
-fn get_disk_usage() -> Option<f64> {
-    use std::process::Command;
-    
-    Command::new("df")
-        .args(&["-h", "/"])
-        .output()
-        .ok()
-        .and_then(|output| {
-            if output.status.success() {
-                let stdout = String::from_utf8(output.stdout).ok()?;
-                // Parse df output
-                // Example: "Filesystem     Size   Used  Avail Capacity  iused      ifree %iused  Mounted on"
-                //          "/dev/disk1s1  233Gi   85Gi  147Gi    37%  1384758 4293582521    0%   /"
-                for line in stdout.lines().skip(1) { // Skip header
-                    if line.contains('/') && !line.starts_with("/dev/disk") {
-                        continue;
-                    }
-                    let parts: Vec<&str> = line.split_whitespace().collect();
-                    if parts.len() >= 5 {
-                        if let Some(capacity_str) = parts[4].strip_suffix('%') {
-                            return capacity_str.parse::<f64>().ok();
-                        }
-                    }
-                }
-                None
-            } else {
-                None
-            }
-        })
-}
 
 
 /// Get memory usage by running ps command
@@ -326,6 +297,7 @@ pub fn fetch_all_model_metrics(client: &Client) -> crate::Result<AllModelMetrics
 }
 
 /// Fetch metrics from the Llama-Swap API - backward compatibility function that aggregates all models
+#[allow(dead_code)]
 pub fn fetch_metrics(client: &Client) -> crate::Result<Metrics> {
     let all_metrics = fetch_all_model_metrics(client)?;
     
@@ -375,6 +347,7 @@ pub fn fetch_metrics(client: &Client) -> crate::Result<Metrics> {
 }
 
 /// Alternative: Check service health more explicitly
+#[allow(dead_code)]
 pub fn check_service_health(client: &Client) -> bool {
     let url = format!("{}:{}/running", constants::API_BASE_URL, constants::API_PORT);
     

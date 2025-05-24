@@ -1,6 +1,7 @@
 use std::process::Command;
 use crate::constants::LAUNCH_AGENT_LABEL;
 
+#[allow(dead_code)]
 pub enum DetectionMethod {
     ApiCheck,
     LaunchctlList,

@@ -45,6 +45,7 @@ pub fn generate_enhanced_sparkline(
 }
 
 /// Calculate min and max with some padding
+#[allow(dead_code)]
 fn calculate_bounds(data: &[f64]) -> (f64, f64) {
     let min = data.iter().fold(f64::INFINITY, |a, &b| a.min(b));
     let max = data.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
@@ -90,6 +91,7 @@ fn calculate_bounds_smart(data: &[f64]) -> (f64, f64) {
 }
 
 /// Draw reference line (average or baseline)
+#[allow(dead_code)]
 fn draw_reference_line(
     img: &mut RgbaImage, 
     value: f64, 
@@ -199,6 +201,7 @@ fn draw_dot(img: &mut RgbaImage, cx: u32, cy: u32, color: (u8, u8, u8)) {
 }
 
 /// Legacy function for backward compatibility
+#[allow(dead_code)]
 pub fn generate_sparkline(
     data: &VecDeque<f64>,
     color: (u8, u8, u8),

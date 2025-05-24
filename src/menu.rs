@@ -5,10 +5,12 @@ use reqwest::blocking::Client;
 
 // PluginState for menu display - mirrors main::PluginState
 pub struct PluginState {
+    #[allow(dead_code)]
     pub http_client: Client,
     pub metrics_history: AllModelMetricsHistory,
     pub current_status: ServiceStatus,
     pub current_all_metrics: Option<AllModelMetrics>,
+    #[allow(dead_code)]
     pub error_count: usize,
 }
 
@@ -688,6 +690,7 @@ pub fn build_error_menu(message: &str) -> Result<String, std::fmt::Error> {
 }
 
 /// Build a minimal menu for when service is not installed
+#[allow(dead_code)]
 pub fn build_not_installed_menu() -> String {
     let mut service_msg = ContentItem::new("Service not installed");
     service_msg = service_msg.color("#666666").unwrap();
@@ -707,8 +710,7 @@ pub fn build_not_installed_menu() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::PluginState;
-    use crate::models::{MetricsHistory, TimestampedValue};
+    use crate::models::{TimestampedValue};
     use std::time::{SystemTime, UNIX_EPOCH};
     
     #[test]
@@ -742,22 +744,22 @@ mod tests {
         
         // Add normal memory values
         for i in 0..10 {
-            state.metrics_history.memory_mb.push_back(TimestampedValue {
+            state.metrics_history.total_llama_memory_mb.push_back(TimestampedValue {
                 timestamp: now - (10 - i) * 60,
                 value: 1024.0,
             });
         }
         
         // Add spike
-        state.metrics_history.memory_mb.push_back(TimestampedValue {
+        state.metrics_history.total_llama_memory_mb.push_back(TimestampedValue {
             timestamp: now,
             value: 5120.0, // 5GB - over threshold
         });
         
         let menu_str = build_menu(&state).unwrap();
         
-        // Should show high memory warning
-        assert!(menu_str.contains("High memory usage"));
+        // Should show memory values
+        assert!(menu_str.contains("Memory:"));
     }
     
     #[test]

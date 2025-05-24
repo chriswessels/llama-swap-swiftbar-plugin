@@ -682,6 +682,7 @@ impl MetricsHistory {
     }
     
     /// Fast anomaly detection using recent average
+    #[allow(dead_code)]
     fn detect_anomaly(&self, deque: &VecDeque<TimestampedValue>, current: f64) -> bool {
         let len = deque.len();
         if len < 5 {
