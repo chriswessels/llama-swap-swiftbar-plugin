@@ -44,16 +44,6 @@ pub fn generate_enhanced_sparkline(
     Ok(DynamicImage::ImageRgba8(img))
 }
 
-/// Calculate min and max with some padding
-#[allow(dead_code)]
-fn calculate_bounds(data: &[f64]) -> (f64, f64) {
-    let min = data.iter().fold(f64::INFINITY, |a, &b| a.min(b));
-    let max = data.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
-    
-    // Add 5% padding to avoid line touching edges
-    let padding = (max - min) * 0.05;
-    (min - padding, max + padding)
-}
 
 /// Smart bounds calculation that centers data and maximizes use of chart space
 fn calculate_bounds_smart(data: &[f64]) -> (f64, f64) {
@@ -90,26 +80,6 @@ fn calculate_bounds_smart(data: &[f64]) -> (f64, f64) {
     }
 }
 
-/// Draw reference line (average or baseline)
-#[allow(dead_code)]
-fn draw_reference_line(
-    img: &mut RgbaImage, 
-    value: f64, 
-    min_val: f64, 
-    scale: f64, 
-    width: u32
-) {
-    let height = img.height();
-    let y = height - 1 - ((value - min_val) * scale) as u32;
-    let y = y.min(height - 1);
-    
-    // Draw dotted reference line
-    for x in (0..width).step_by(3) {
-        if x < width {
-            img.put_pixel(x, y, Rgba([128, 128, 128, 128])); // Semi-transparent gray
-        }
-    }
-}
 
 /// Draw enhanced line chart with anomaly highlighting
 fn draw_enhanced_line_chart(
@@ -200,16 +170,6 @@ fn draw_dot(img: &mut RgbaImage, cx: u32, cy: u32, color: (u8, u8, u8)) {
     }
 }
 
-/// Legacy function for backward compatibility
-#[allow(dead_code)]
-pub fn generate_sparkline(
-    data: &VecDeque<f64>,
-    color: (u8, u8, u8),
-    width: u32,
-    height: u32,
-) -> crate::Result<DynamicImage> {
-    generate_enhanced_sparkline(data, color, width, height)
-}
 
 /// Helper to generate enhanced sparklines for specific metrics
 pub fn generate_tps_sparkline(history: &VecDeque<f64>) -> crate::Result<DynamicImage> {

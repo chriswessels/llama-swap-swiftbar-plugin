@@ -303,6 +303,7 @@ impl MenuBuilder {
             label.push_str(&format!(" {}", time_text));
         }
         
+        
         let mut item = ContentItem::new(label);
         
         // Apply trend color to the text
@@ -399,6 +400,7 @@ impl MenuBuilder {
         if !time_text.is_empty() {
             label.push_str(&format!(" {}", time_text));
         }
+        
         
         let mut item = ContentItem::new(label);
         
@@ -502,6 +504,7 @@ impl MenuBuilder {
         if !time_text.is_empty() {
             label.push_str(&format!(" {}", time_text));
         }
+        
         
         let mut item = ContentItem::new(label);
         
@@ -689,23 +692,6 @@ pub fn build_error_menu(message: &str) -> Result<String, std::fmt::Error> {
     Ok(menu.to_string())
 }
 
-/// Build a minimal menu for when service is not installed
-#[allow(dead_code)]
-pub fn build_not_installed_menu() -> String {
-    let mut service_msg = ContentItem::new("Service not installed");
-    service_msg = service_msg.color("#666666").unwrap();
-    
-    let mut doc_link = ContentItem::new("Visit documentation...");
-    doc_link = doc_link.href("https://github.com/your-org/llama-swap").unwrap();
-    
-    let menu = Menu(vec![
-        MenuItem::Content(ContentItem::new("⚪ Llama-Swap")),
-        MenuItem::Sep,
-        MenuItem::Content(service_msg),
-        MenuItem::Content(doc_link),
-    ]);
-    menu.to_string()
-}
 
 #[cfg(test)]
 mod tests {

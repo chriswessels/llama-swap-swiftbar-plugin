@@ -296,66 +296,7 @@ pub fn fetch_all_model_metrics(client: &Client) -> crate::Result<AllModelMetrics
     })
 }
 
-/// Fetch metrics from the Llama-Swap API - backward compatibility function that aggregates all models
-#[allow(dead_code)]
-pub fn fetch_metrics(client: &Client) -> crate::Result<Metrics> {
-    let all_metrics = fetch_all_model_metrics(client)?;
-    
-    // Aggregate metrics from all running models
-    let mut total_prompt_tokens_per_sec = 0.0;
-    let mut total_predicted_tokens_per_sec = 0.0;
-    let mut total_requests_processing = 0u32;
-    let mut total_requests_deferred = 0u32;
-    let mut total_kv_cache_usage_ratio = 0.0;
-    let mut total_kv_cache_tokens = 0u32;
-    let mut total_n_decode_total = 0u32;
-    let active_models = all_metrics.models.len();
-    
-    for model_metrics in &all_metrics.models {
-        let metrics = &model_metrics.metrics;
-        total_prompt_tokens_per_sec += metrics.prompt_tokens_per_sec;
-        total_predicted_tokens_per_sec += metrics.predicted_tokens_per_sec;
-        total_requests_processing += metrics.requests_processing;
-        total_requests_deferred += metrics.requests_deferred;
-        total_kv_cache_usage_ratio += metrics.kv_cache_usage_ratio;
-        total_kv_cache_tokens += metrics.kv_cache_tokens;
-        total_n_decode_total += metrics.n_decode_total;
-    }
-    
-    // Average KV cache usage ratio across models
-    let avg_kv_cache_usage_ratio = if active_models > 0 {
-        total_kv_cache_usage_ratio / active_models as f64
-    } else {
-        0.0
-    };
-    
-    // Create aggregated metrics
-    let mut metrics = Metrics {
-        prompt_tokens_per_sec: total_prompt_tokens_per_sec,
-        predicted_tokens_per_sec: total_predicted_tokens_per_sec,
-        requests_processing: total_requests_processing,
-        requests_deferred: total_requests_deferred,
-        kv_cache_usage_ratio: avg_kv_cache_usage_ratio,
-        kv_cache_tokens: total_kv_cache_tokens,
-        n_decode_total: total_n_decode_total,
-        memory_mb: all_metrics.total_llama_memory_mb,
-    };
-    
-    metrics.validate()?;
-    
-    Ok(metrics)
-}
 
-/// Alternative: Check service health more explicitly
-#[allow(dead_code)]
-pub fn check_service_health(client: &Client) -> bool {
-    let url = format!("{}:{}/running", constants::API_BASE_URL, constants::API_PORT);
-    
-    match client.get(&url).timeout(Duration::from_secs(1)).send() {
-        Ok(response) => response.status().is_success(),
-        Err(_) => false,
-    }
-}
 
 #[cfg(test)]
 mod tests {
