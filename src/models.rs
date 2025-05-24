@@ -180,12 +180,6 @@ pub struct MetricStats {
     pub count: usize,
 }
 
-// Unified data operations trait
-trait DataOperations {
-    fn push_value(&mut self, value: f64, timestamp: u64, max_size: usize);
-    fn trim_old_data(&mut self);
-    fn clear(&mut self);
-}
 
 // Unified analysis operations
 struct DataAnalyzer;

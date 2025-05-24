@@ -6,6 +6,7 @@ pub fn handle_command(command: &str) -> crate::Result<()> {
         "do_start" => start_service(),
         "do_stop" => stop_service(),
         "do_restart" => restart_service(),
+        "do_unload" => unload_models(),
         "view_logs" => view_file(crate::constants::LOG_FILE_PATH, create_default_log),
         "view_config" => view_file(crate::constants::CONFIG_FILE_PATH, create_default_config),
         _ => Err(format!("Unknown command: {}", command).into()),
@@ -76,6 +77,26 @@ fn restart_service() -> crate::Result<()> {
     }
 }
 
+fn unload_models() -> crate::Result<()> {
+    eprintln!("Unloading models...");
+    
+    let client = reqwest::blocking::Client::new();
+    let url = format!("{}:{}/unload", crate::constants::API_BASE_URL, crate::constants::API_PORT);
+    
+    let response = client
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .map_err(|e| format!("Failed to connect to API: {}", e))?;
+    
+    if response.status().is_success() {
+        eprintln!("Models unloaded successfully");
+        Ok(())
+    } else {
+        Err(format!("Failed to unload models: {}", response.status()).into())
+    }
+}
+
 fn view_file(file_path: &str, default_content_fn: fn() -> &'static str) -> crate::Result<()> {
     let expanded_path = expand_tilde(file_path)?;
     
@@ -97,7 +118,6 @@ fn view_file(file_path: &str, default_content_fn: fn() -> &'static str) -> crate
 // Helper structs and functions
 
 struct ServiceContext {
-    user_id: String,
     target_domain: String,
     service_target: String,
     plist_path: String,
@@ -111,7 +131,6 @@ impl ServiceContext {
         let plist_path = get_plist_path()?;
         
         Ok(Self {
-            user_id,
             target_domain,
             service_target,
             plist_path,

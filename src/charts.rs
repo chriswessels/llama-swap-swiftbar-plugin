@@ -74,12 +74,8 @@ fn calculate_bounds(data: &[f64]) -> (f64, f64) {
     
     if range.abs() < f64::EPSILON {
         let value = min;
-        if value == 0.0 {
-            (0.0, 1.0)
-        } else {
-            let padding = value.abs().max(1.0) * 0.5;
-            (value - padding, value + padding)
-        }
+        let padding = value.abs().max(1.0) * 0.5;
+        (value - padding, value + padding)
     } else {
         let center = (min + max) / 2.0;
         let half_range = range / 2.0;

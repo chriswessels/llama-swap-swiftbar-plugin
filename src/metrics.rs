@@ -129,33 +129,6 @@ fn get_load_average() -> Option<f64> {
 }
 
 fn get_llama_server_memory_mb() -> f64 {
-    get_memory_via_ps().unwrap_or_else(|| get_memory_via_sysinfo())
-}
-
-fn get_memory_via_ps() -> Option<f64> {
-    use std::process::Command;
-    
-    let output = Command::new("ps")
-        .args(&["aux"])
-        .output()
-        .ok()?;
-    
-    let stdout = String::from_utf8(output.stdout).ok()?;
-    let total_memory_kb = stdout
-        .lines()
-        .filter(|line| line.contains("llama-server") || line.contains("llama_server"))
-        .filter_map(|line| {
-            line.split_whitespace()
-                .nth(5)?
-                .parse::<u64>()
-                .ok()
-        })
-        .sum::<u64>();
-    
-    Some(total_memory_kb as f64 / 1024.0)
-}
-
-fn get_memory_via_sysinfo() -> f64 {
     use sysinfo::System;
     
     let system = System::new_all();

@@ -71,7 +71,7 @@ impl MenuBuilder {
         self.items.push(MenuItem::Content(header));
     }
     
-    fn add_control_section(&mut self, status: ServiceStatus) {
+    fn add_control_section(&mut self, status: ServiceStatus, has_models: bool) {
         let exe = std::env::current_exe().unwrap();
         let exe_str = exe.to_str().unwrap();
         
@@ -80,6 +80,12 @@ impl MenuBuilder {
                 let mut item = ContentItem::new("🔴 Stop Service");
                 item = item.command(attr::Command::try_from((exe_str, "do_stop")).unwrap()).unwrap();
                 self.items.push(MenuItem::Content(item));
+                
+                if has_models {
+                    let mut unload = ContentItem::new("🗑️ Unload Model(s)");
+                    unload = unload.command(attr::Command::try_from((exe_str, "do_unload")).unwrap()).unwrap();
+                    self.items.push(MenuItem::Content(unload));
+                }
             }
             ServiceStatus::Stopped | ServiceStatus::Unknown => {
                 let mut item = ContentItem::new("🟢 Start Service");
@@ -139,14 +145,14 @@ impl MenuBuilder {
             }
         }
         
-        if !history.load_average_1m.is_empty() {
-            if let Some(item) = self.create_system_metric("Load Avg", &history.load_average_1m, None, charts::MetricType::Prompt, format_load, MetricDisplayType::Simple, history) {
+        if !history.total_llama_memory_mb.is_empty() && !history.used_memory_gb.is_empty() {
+            if let Some(item) = self.create_system_metric("Llama Memory", &history.total_llama_memory_mb, Some(&history.used_memory_gb), charts::MetricType::Memory, format_memory, MetricDisplayType::LlamaMemory, history) {
                 self.items.push(item);
             }
         }
         
-        if !history.total_llama_memory_mb.is_empty() && !history.used_memory_gb.is_empty() {
-            if let Some(item) = self.create_system_metric("Llama Memory", &history.total_llama_memory_mb, Some(&history.used_memory_gb), charts::MetricType::Memory, format_memory, MetricDisplayType::LlamaMemory, history) {
+        if !history.load_average_1m.is_empty() {
+            if let Some(item) = self.create_system_metric("Load Avg", &history.load_average_1m, None, charts::MetricType::Prompt, format_load, MetricDisplayType::Simple, history) {
                 self.items.push(item);
             }
         }
@@ -485,11 +491,18 @@ pub fn build_menu(state: &PluginState) -> crate::Result<String> {
     
     menu.add_title(state.current_status);
     menu.add_separator();
-    menu.add_control_section(state.current_status);
+    let has_models = state.current_all_metrics
+        .as_ref()
+        .map(|m| !m.models.is_empty())
+        .unwrap_or(false);
+    menu.add_control_section(state.current_status, has_models);
     menu.add_separator();
     menu.add_file_section();
     
     if state.current_status == ServiceStatus::Running {
+        menu.add_separator();
+        menu.add_system_metrics_section(&state.metrics_history);
+        
         if let Some(ref all_metrics) = state.current_all_metrics {
             for model_metrics in &all_metrics.models {
                 if let Some(model_history) = state.metrics_history.get_model_history(&model_metrics.model_name) {
@@ -500,9 +513,6 @@ pub fn build_menu(state: &PluginState) -> crate::Result<String> {
                 }
             }
         }
-        
-        menu.add_separator();
-        menu.add_system_metrics_section(&state.metrics_history);
     }
     
     menu.add_separator();
@@ -530,26 +540,10 @@ pub fn build_error_menu(message: &str) -> Result<String, std::fmt::Error> {
     Ok(menu.to_string())
 }
 
-pub fn build_not_installed_menu() -> String {
-    let menu = Menu(vec![
-        MenuItem::Content(ContentItem::new("⚪ Llama-Swap")),
-        MenuItem::Sep,
-        MenuItem::Content(ContentItem::new("Service not installed").color("#ff0000").unwrap()),
-        MenuItem::Sep,
-        MenuItem::Content(
-            ContentItem::new("Visit documentation")
-                .href("https://github.com/your-org/llama-swap-swiftbar")
-                .unwrap()
-        ),
-    ]);
-    menu.to_string()
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::TimestampedValue;
-    use std::time::{SystemTime, UNIX_EPOCH};
     
     #[test]
     fn test_menu_with_running_service() {
@@ -578,14 +572,6 @@ mod tests {
         assert!(error_menu.contains("Retry"));
     }
     
-    #[test]
-    fn test_not_installed_menu() {
-        let menu = build_not_installed_menu();
-        
-        assert!(menu.contains("Llama-Swap"));
-        assert!(menu.contains("Service not installed"));
-        assert!(menu.contains("Visit documentation"));
-    }
     
     fn create_test_state(status: ServiceStatus) -> PluginState {
         PluginState {
