@@ -1,47 +1,30 @@
 use std::process::Command;
 use crate::constants::LAUNCH_AGENT_LABEL;
 
-/// Handle command-line arguments from menu clicks
 pub fn handle_command(command: &str) -> crate::Result<()> {
     match command {
         "do_start" => start_service(),
         "do_stop" => stop_service(),
         "do_restart" => restart_service(),
-        "view_logs" => view_logs(),
-        "view_config" => view_config(),
+        "view_logs" => view_file(crate::constants::LOG_FILE_PATH, create_default_log),
+        "view_config" => view_file(crate::constants::CONFIG_FILE_PATH, create_default_config),
         _ => Err(format!("Unknown command: {}", command).into()),
     }
 }
 
-/// Start the Llama-Swap service
 fn start_service() -> crate::Result<()> {
     eprintln!("Starting Llama-Swap service...");
     
-    // First check if the service is installed
-    if !is_service_installed()? {
-        return Err("Service is not installed. Please install the Llama-Swap launch agent first.".into());
-    }
+    ensure_service_installed()?;
+    let service_context = ServiceContext::new()?;
     
-    let user_id = get_user_id()?;
-    let target_domain = format!("gui/{}", user_id);
-    let service_target = format!("{}/{}", target_domain, LAUNCH_AGENT_LABEL);
-    let plist_path = get_plist_path()?;
+    // Run the setup commands
+    let _ = run_launchctl_command("enable", &[&service_context.service_target]);
+    let _ = run_launchctl_command("bootstrap", &[&service_context.target_domain, &service_context.plist_path]);
     
-    // Enable the service
-    let _ = Command::new("launchctl")
-        .args(&["enable", &service_target])
-        .output();
-    
-    // Bootstrap the service
-    let _ = Command::new("launchctl")
-        .args(&["bootstrap", &target_domain, &plist_path])
-        .output();
-    
-    // Kickstart the service
-    let output = Command::new("launchctl")
-        .args(&["kickstart", "-kp", &service_target])
-        .output()
-        .map_err(|e| format!("Failed to execute launchctl kickstart: {}", e))?;
+    // The final kickstart command is critical
+    let output = run_launchctl_command("kickstart", &["-kp", &service_context.service_target])
+        .map_err(|e| format!("Failed to start service: {}", e))?;
     
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -52,79 +35,122 @@ fn start_service() -> crate::Result<()> {
     Ok(())
 }
 
-/// Stop the Llama-Swap service
 fn stop_service() -> crate::Result<()> {
     eprintln!("Stopping Llama-Swap service...");
     
-    // First check if the service is installed
-    if !is_service_installed()? {
-        return Err("Service is not installed. Please install the Llama-Swap launch agent first.".into());
-    }
+    ensure_service_installed()?;
+    let service_context = ServiceContext::new()?;
     
-    let user_id = get_user_id()?;
-    let service_target = format!("gui/{}/{}", user_id, LAUNCH_AGENT_LABEL);
-    
-    // Use bootout to stop the service (modern launchctl API)
-    let output = Command::new("launchctl")
-        .args(&["bootout", &service_target])
-        .output()
-        .map_err(|e| format!("Failed to execute launchctl bootout: {}", e))?;
+    let output = run_launchctl_command("bootout", &[&service_context.service_target])
+        .map_err(|e| format!("Failed to stop service: {}", e))?;
     
     // bootout can return non-zero if service wasn't running, but that's ok
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    if !output.status.success() && !stderr.contains("No such process") {
-        return Err(format!("Failed to stop service: {}", stderr).into());
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !stderr.contains("No such process") {
+            return Err(format!("Failed to stop service: {}", stderr).into());
+        }
     }
     
     eprintln!("Service stopped successfully");
     Ok(())
 }
 
-/// Restart the Llama-Swap service
 fn restart_service() -> crate::Result<()> {
     eprintln!("Restarting Llama-Swap service...");
     
-    // First check if the service is installed
-    if !is_service_installed()? {
-        return Err("Service is not installed. Please install the Llama-Swap launch agent first.".into());
-    }
+    ensure_service_installed()?;
+    let service_context = ServiceContext::new()?;
     
-    let user_id = get_user_id()?;
-    let service_target = format!("gui/{}/{}", user_id, LAUNCH_AGENT_LABEL);
-    
-    // Try kickstart first (modern approach - kills and restarts in one command)
-    let output = Command::new("launchctl")
-        .args(&["kickstart", "-kp", &service_target])
-        .output();
-    
-    match output {
-        Ok(result) if result.status.success() => {
+    match run_launchctl_command("kickstart", &["-kp", &service_context.service_target]) {
+        Ok(output) if output.status.success() => {
             eprintln!("Service restarted successfully");
-            return Ok(());
+            Ok(())
         }
-        Ok(result) => {
-            let stderr = String::from_utf8_lossy(&result.stderr);
-            eprintln!("Kickstart failed: {}", stderr);
-            // Fallback to stop + start
-            eprintln!("Falling back to stop+start");
+        _ => {
+            eprintln!("Kickstart failed, falling back to stop+start");
             stop_service()?;
             std::thread::sleep(std::time::Duration::from_millis(500));
-            start_service()?;
+            start_service()
         }
-        Err(e) => {
-            eprintln!("Kickstart command failed: {}", e);
-            // Fallback to stop + start
-            eprintln!("Falling back to stop+start");
-            stop_service()?;
-            std::thread::sleep(std::time::Duration::from_millis(500));
-            start_service()?;
-        }
+    }
+}
+
+fn view_file(file_path: &str, default_content_fn: fn() -> &'static str) -> crate::Result<()> {
+    let expanded_path = expand_tilde(file_path)?;
+    
+    ensure_file_exists(&expanded_path, default_content_fn)?;
+    
+    let output = Command::new("open")
+        .args(&["-t", &expanded_path])
+        .output()
+        .map_err(|e| format!("Failed to execute open command: {}", e))?;
+    
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("Failed to open file: {}", stderr).into());
     }
     
     Ok(())
 }
 
-/// Get current user ID for launchctl commands
+// Helper structs and functions
+
+struct ServiceContext {
+    user_id: String,
+    target_domain: String,
+    service_target: String,
+    plist_path: String,
+}
+
+impl ServiceContext {
+    fn new() -> crate::Result<Self> {
+        let user_id = get_user_id()?;
+        let target_domain = format!("gui/{}", user_id);
+        let service_target = format!("{}/{}", target_domain, LAUNCH_AGENT_LABEL);
+        let plist_path = get_plist_path()?;
+        
+        Ok(Self {
+            user_id,
+            target_domain,
+            service_target,
+            plist_path,
+        })
+    }
+}
+
+fn ensure_service_installed() -> crate::Result<()> {
+    if !is_service_installed()? {
+        return Err("Service is not installed. Please install the Llama-Swap launch agent first.".into());
+    }
+    Ok(())
+}
+
+fn ensure_file_exists(path: &str, default_content_fn: fn() -> &'static str) -> crate::Result<()> {
+    if std::path::Path::new(path).exists() {
+        return Ok(());
+    }
+    
+    // Create parent directory if needed
+    if let Some(parent) = std::path::Path::new(path).parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create directory: {}", e))?;
+    }
+    
+    // Create file with default content
+    std::fs::write(path, default_content_fn())
+        .map_err(|e| format!("Failed to create file: {}", e))?;
+    
+    Ok(())
+}
+
+fn run_launchctl_command(subcommand: &str, args: &[&str]) -> Result<std::process::Output, std::io::Error> {
+    Command::new("launchctl")
+        .arg(subcommand)
+        .args(args)
+        .output()
+}
+
 fn get_user_id() -> crate::Result<String> {
     let output = Command::new("id")
         .arg("-u")
@@ -138,64 +164,33 @@ fn get_user_id() -> crate::Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-/// Check if the Llama-Swap service is installed (launch agent plist exists)
 fn is_service_installed() -> crate::Result<bool> {
     let plist_path = get_plist_path()?;
     Ok(std::path::Path::new(&plist_path).exists())
 }
 
-/// Get the full path to the plist file
 fn get_plist_path() -> crate::Result<String> {
     let home = std::env::var("HOME")
         .map_err(|_| "Failed to get HOME directory")?;
-    
     Ok(format!("{}/Library/LaunchAgents/{}.plist", home, LAUNCH_AGENT_LABEL))
 }
 
-/// Open log file in default text editor
-fn view_logs() -> crate::Result<()> {
-    let log_path = expand_tilde(crate::constants::LOG_FILE_PATH)?;
-    
-    // Create the file if it doesn't exist
-    if !std::path::Path::new(&log_path).exists() {
-        // Create parent directory if needed
-        if let Some(parent) = std::path::Path::new(&log_path).parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create log directory: {}", e))?;
-        }
-        
-        // Create empty log file
-        std::fs::write(&log_path, "# Llama-Swap Plugin Log\n")
-            .map_err(|e| format!("Failed to create log file: {}", e))?;
+fn expand_tilde(path: &str) -> crate::Result<String> {
+    if path.starts_with("~/") {
+        let home = std::env::var("HOME")
+            .map_err(|_| "Failed to get HOME directory")?;
+        Ok(path.replacen("~", &home, 1))
+    } else {
+        Ok(path.to_string())
     }
-    
-    let output = Command::new("open")
-        .args(&["-t", &log_path])
-        .output()
-        .map_err(|e| format!("Failed to execute open command: {}", e))?;
-    
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Failed to open log file: {}", stderr).into());
-    }
-    
-    Ok(())
 }
 
-/// Open config file in default text editor
-fn view_config() -> crate::Result<()> {
-    let config_path = expand_tilde(crate::constants::CONFIG_FILE_PATH)?;
-    
-    // Create the file if it doesn't exist
-    if !std::path::Path::new(&config_path).exists() {
-        // Create parent directory if needed
-        if let Some(parent) = std::path::Path::new(&config_path).parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create config directory: {}", e))?;
-        }
-        
-        // Create default config file
-        let default_config = r#"# Llama-Swap Plugin Configuration
+fn create_default_log() -> &'static str {
+    "# Llama-Swap Plugin Log\n"
+}
+
+fn create_default_config() -> &'static str {
+    r#"# Llama-Swap Plugin Configuration
 # Configuration for the SwiftBar plugin
 
 # Service settings
@@ -215,32 +210,5 @@ monitoring:
   alert_thresholds:
     memory_mb: 4096
     tps_low: 1.0
-"#;
-        
-        std::fs::write(&config_path, default_config)
-            .map_err(|e| format!("Failed to create config file: {}", e))?;
-    }
-    
-    let output = Command::new("open")
-        .args(&["-t", &config_path])
-        .output()
-        .map_err(|e| format!("Failed to execute open command: {}", e))?;
-    
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Failed to open config file: {}", stderr).into());
-    }
-    
-    Ok(())
-}
-
-/// Expand ~ to user home directory
-fn expand_tilde(path: &str) -> crate::Result<String> {
-    if path.starts_with("~/") {
-        let home = std::env::var("HOME")
-            .map_err(|_| "Failed to get HOME directory")?;
-        Ok(path.replacen("~", &home, 1))
-    } else {
-        Ok(path.to_string())
-    }
+"#
 }

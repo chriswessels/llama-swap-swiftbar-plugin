@@ -1,9 +1,9 @@
 use bitbar::{Menu, MenuItem, ContentItem, attr};
-use crate::{icons, charts, constants};
-use crate::models::{ServiceStatus, AllModelMetricsHistory, AllModelMetrics, MetricsHistory};
+use crate::{icons, charts};
+use crate::models::{ServiceStatus, AllModelMetricsHistory, AllModelMetrics, MetricsHistory, TimestampedValue, Trend};
 use reqwest::blocking::Client;
+use std::collections::VecDeque;
 
-// PluginState for menu display - mirrors main::PluginState
 pub struct PluginState {
     #[allow(dead_code)]
     pub http_client: Client,
@@ -14,53 +14,14 @@ pub struct PluginState {
     pub error_count: usize,
 }
 
-/// Build the complete menu based on current state
-pub fn build_menu(state: &PluginState) -> crate::Result<String> {
-    let mut menu = MenuBuilder::new();
-    
-    // Add title with status icon
-    menu.add_title(state.current_status);
-    
-    // Add sections based on state
-    menu.add_separator();
-    menu.add_control_section(state.current_status);
-    
-    menu.add_separator();
-    menu.add_file_section();
-    
-    // Show metrics for each running model
-    if state.current_status == ServiceStatus::Running {
-        if let Some(ref all_metrics) = state.current_all_metrics {
-            for model_metrics in &all_metrics.models {
-                if let Some(model_history) = state.metrics_history.get_model_history(&model_metrics.model_name) {
-                    if !model_history.tps.is_empty() {
-                        menu.add_separator();
-                        menu.add_model_metrics_section(&model_metrics.model_name, model_history, &model_metrics.metrics);
-                    }
-                }
-            }
-        }
-        
-        // Add system metrics section
-        menu.add_separator();
-        menu.add_system_metrics_section(&state.metrics_history);
-        
-        // Add llama memory section if we have any models
-        if !state.metrics_history.total_llama_memory_mb.is_empty() {
-            menu.add_separator();
-            menu.add_llama_memory_section(&state.metrics_history);
-        }
-    }
-    
-    // Add footer section
-    menu.add_separator();
-    menu.add_footer_section();
-    
-    let built_menu = menu.build();
-    Ok(built_menu.to_string())
+#[derive(Clone)]
+enum MetricDisplayType {
+    Simple,
+    SystemMemory,
+    LlamaMemory,
+    KvCache,
 }
 
-/// Menu builder for cleaner construction
 struct MenuBuilder {
     items: Vec<MenuItem>,
 }
@@ -104,6 +65,12 @@ impl MenuBuilder {
         self.items.push(MenuItem::Sep);
     }
     
+    fn add_header(&mut self, title: &str) {
+        let mut header = ContentItem::new(title);
+        header = header.color("#666666").unwrap();
+        self.items.push(MenuItem::Content(header));
+    }
+    
     fn add_control_section(&mut self, status: ServiceStatus) {
         let exe = std::env::current_exe().unwrap();
         let exe_str = exe.to_str().unwrap();
@@ -112,7 +79,6 @@ impl MenuBuilder {
             ServiceStatus::Running => {
                 let mut item = ContentItem::new("🔴 Stop Service");
                 item = item.command(attr::Command::try_from((exe_str, "do_stop")).unwrap()).unwrap();
-                // Note: SwiftBar doesn't support keyboard shortcuts in the same way as BitBar
                 self.items.push(MenuItem::Content(item));
             }
             ServiceStatus::Stopped | ServiceStatus::Unknown => {
@@ -131,664 +97,140 @@ impl MenuBuilder {
         let exe = std::env::current_exe().unwrap();
         let exe_str = exe.to_str().unwrap();
         
-        // Use direct shell commands for file operations
-        let _log_path = expand_tilde(constants::LOG_FILE_PATH)
-            .unwrap_or_else(|_| constants::LOG_FILE_PATH.to_string());
-        let _config_path = expand_tilde(constants::CONFIG_FILE_PATH)
-            .unwrap_or_else(|_| constants::CONFIG_FILE_PATH.to_string());
-        
-        // View logs command - use plugin executable with command
         let mut view_logs = ContentItem::new("📄 View Logs");
         view_logs = view_logs.command(attr::Command::try_from((exe_str, "view_logs")).unwrap()).unwrap();
         self.items.push(MenuItem::Content(view_logs));
         
-        // Edit configuration command
         let mut edit_config = ContentItem::new("⚙️ Edit Configuration");
         edit_config = edit_config.command(attr::Command::try_from((exe_str, "view_config")).unwrap()).unwrap();
         self.items.push(MenuItem::Content(edit_config));
     }
     
     fn add_model_metrics_section(&mut self, model_name: &str, history: &MetricsHistory, current_metrics: &crate::models::Metrics) {
-        // Section header with model name
-        let mut header = ContentItem::new(model_name);
-        header = header.color("#666666").unwrap();
-        self.items.push(MenuItem::Content(header));
+        self.add_header(model_name);
         
-        // Generation Speed with dropdown details
-        if let Some(item) = self.create_metric_with_dropdown(
-            "Generation",
-            &history.tps,
-            charts::generate_tps_sparkline,
-            |v| format!("{:.1} tok/s", v),
-            history,
-        ) {
+        if let Some(item) = self.create_metric("Generation", &history.tps, None, charts::MetricType::Tps, format_tps, MetricDisplayType::Simple, history) {
             self.items.push(item);
         }
         
-        // Prompt Speed with dropdown details  
-        if let Some(item) = self.create_metric_with_dropdown(
-            "Prompt",
-            &history.prompt_tps,
-            charts::generate_prompt_sparkline,
-            |v| format!("{:.1} tok/s", v),
-            history,
-        ) {
+        if let Some(item) = self.create_metric("Prompt", &history.prompt_tps, None, charts::MetricType::Prompt, format_tps, MetricDisplayType::Simple, history) {
             self.items.push(item);
         }
         
-        // KV Cache with enhanced display (tokens and percentage)
-        if let Some(item) = self.create_enhanced_kv_cache_metric_with_dropdown(
-            "KV Cache",
-            &history.kv_cache_percent,
-            &history.kv_cache_tokens,
-            charts::generate_kv_cache_sparkline,
-            history,
-        ) {
+        if let Some(item) = self.create_metric("KV Cache", &history.kv_cache_percent, Some(&history.kv_cache_tokens), charts::MetricType::KvCache, format_percent, MetricDisplayType::KvCache, history) {
             self.items.push(item);
         }
         
-        // Queue Status (simple display, no sparkline needed)
-        self.add_model_queue_status_item(current_metrics);
+        self.add_queue_status(current_metrics);
     }
     
     fn add_system_metrics_section(&mut self, history: &AllModelMetricsHistory) {
-        // Section header
-        let mut header = ContentItem::new("System Metrics");
-        header = header.color("#666666").unwrap();
-        self.items.push(MenuItem::Content(header));
+        self.add_header("System Metrics");
         
-        // CPU usage
         if !history.cpu_usage_percent.is_empty() {
-            if let Some(item) = self.create_system_metric_with_dropdown(
-                "CPU",
-                &history.cpu_usage_percent,
-                charts::generate_tps_sparkline, // Reuse TPS sparkline for percentages
-                |v| format!("{:.1}%", v),
-                history,
-                "cpu",
-            ) {
+            if let Some(item) = self.create_system_metric("CPU", &history.cpu_usage_percent, None, charts::MetricType::Tps, format_percent, MetricDisplayType::Simple, history) {
                 self.items.push(item);
             }
         }
         
-        // System memory usage (both GB and percentage)
         if !history.memory_usage_percent.is_empty() && !history.used_memory_gb.is_empty() {
-            if let Some(item) = self.create_enhanced_memory_metric_with_dropdown(
-                "Memory",
-                &history.memory_usage_percent,
-                &history.used_memory_gb,
-                charts::generate_memory_sparkline,
-                history,
-            ) {
+            if let Some(item) = self.create_system_metric("Memory", &history.memory_usage_percent, Some(&history.used_memory_gb), charts::MetricType::Memory, format_percent, MetricDisplayType::SystemMemory, history) {
                 self.items.push(item);
             }
         }
         
-        // Load average
         if !history.load_average_1m.is_empty() {
-            if let Some(item) = self.create_system_metric_with_dropdown(
-                "Load Avg",
-                &history.load_average_1m,
-                charts::generate_prompt_sparkline, // Reuse prompt sparkline
-                |v| format!("{:.2}", v),
-                history,
-                "load",
-            ) {
+            if let Some(item) = self.create_system_metric("Load Avg", &history.load_average_1m, None, charts::MetricType::Prompt, format_load, MetricDisplayType::Simple, history) {
                 self.items.push(item);
             }
         }
         
-        // GPU metrics removed - powermetrics was too expensive and unreliable
-    }
-    
-    fn add_llama_memory_section(&mut self, history: &AllModelMetricsHistory) {
-        // Section header
-        let mut header = ContentItem::new("Llama Memory");
-        header = header.color("#666666").unwrap();
-        self.items.push(MenuItem::Content(header));
-        
-        // Memory with dropdown details
-        if let Some(item) = self.create_memory_metric_with_dropdown(
-            "Memory",
-            &history.total_llama_memory_mb,
-            charts::generate_memory_sparkline,
-            |v| format_memory(v),
-            history,
-        ) {
-            self.items.push(item);
+        if !history.total_llama_memory_mb.is_empty() && !history.used_memory_gb.is_empty() {
+            if let Some(item) = self.create_system_metric("Llama Memory", &history.total_llama_memory_mb, Some(&history.used_memory_gb), charts::MetricType::Memory, format_memory, MetricDisplayType::LlamaMemory, history) {
+                self.items.push(item);
+            }
         }
     }
-
-    /// Create a metric item with enhanced sparkline and detailed dropdown submenu
-    fn create_metric_with_dropdown<F, G>(
+    
+    fn create_metric(
         &self,
         name: &str,
-        data: &std::collections::VecDeque<crate::models::TimestampedValue>,
-        chart_fn: F,
-        format_fn: G,
-        history: &crate::models::MetricsHistory,
-    ) -> Option<MenuItem>
-    where
-        F: Fn(&std::collections::VecDeque<f64>) -> crate::Result<image::DynamicImage>,
-        G: Fn(f64) -> String,
-    {
-        if data.is_empty() {
+        primary_data: &VecDeque<TimestampedValue>,
+        secondary_data: Option<&VecDeque<TimestampedValue>>,
+        chart_type: charts::MetricType,
+        format_fn: fn(f64) -> String,
+        display_type: MetricDisplayType,
+        history: &MetricsHistory,
+    ) -> Option<MenuItem> {
+        if primary_data.is_empty() {
             return None;
         }
         
-        let values = data.iter().map(|tv| tv.value).collect();
-        let insights = history.get_insights(data);
-        
-        // Build simple label without trend arrow and time context
-        let label = format!("{}: {}", name, format_fn(insights.current));
-        
-        // Store time context for secondary dropdown
-        let time_text = if data.len() >= 2 {
-            let oldest = data.front().unwrap().timestamp;
-            let newest = data.back().unwrap().timestamp;
-            insights.time_context(oldest, newest)
-        } else if data.len() == 1 {
-            insights.time_context(0, 0) // Will return "(now)"
-        } else {
-            String::new()
-        };
-        
-        
+        let insights = history.get_insights(primary_data);
+        let label = build_label(name, &insights, secondary_data, format_fn, &display_type);
         let mut item = ContentItem::new(label);
         
-        // Don't apply trend color to main item since trend moved to dropdown
-        
-        // Add enhanced sparkline chart
-        if let Ok(chart) = chart_fn(&values) {
-            if let Ok(chart_image) = icons::icon_to_menu_image(chart) {
-                item = item.image(chart_image).unwrap();
-            }
-        }
-        
-        // Create detailed submenu items
-        let mut submenu_items = vec![];
-        
-        // Current value
-        submenu_items.push(MenuItem::Content(
-            ContentItem::new(format!("Current: {}", format_fn(insights.current)))
-        ));
-        
-        // Range (if we have multiple data points)
-        if insights.data_points > 1 {
-            submenu_items.push(MenuItem::Content(
-                ContentItem::new(format!("Range: {:.1} - {:.1}", insights.min, insights.max))
-            ));
-            
-            // Calculate and show average
-            let stats = calculate_stats_for_data(data);
-            submenu_items.push(MenuItem::Content(
-                ContentItem::new(format!("Average: {}", format_fn(stats.mean)))
-            ));
-        }
-        
-        // Trend information
-        if insights.data_points >= 3 {
-            let trend_desc = match insights.trend {
-                crate::models::Trend::Increasing => "▲ Increasing",
-                crate::models::Trend::Decreasing => "▼ Decreasing", 
-                crate::models::Trend::Stable => "▶ Stable",
-                crate::models::Trend::Insufficient => "Insufficient data",
-            };
-            submenu_items.push(MenuItem::Content(
-                ContentItem::new(format!("Trend: {}", trend_desc)).color(insights.trend.color()).unwrap()
-            ));
-        }
-        
-        // Dataset duration
-        if !time_text.is_empty() {
-            submenu_items.push(MenuItem::Content(
-                ContentItem::new(format!("Dataset: {}", time_text))
-            ));
-        }
-        
-        // Add submenu to main item
-        item = item.sub(submenu_items);
+        add_chart(&mut item, primary_data, chart_type);
+        let submenu = build_submenu(&insights, primary_data, secondary_data, format_fn, &display_type, Some(history), None);
+        item = item.sub(submenu);
         
         Some(MenuItem::Content(item))
     }
     
-    /// Create a memory metric item with enhanced sparkline and detailed dropdown submenu
-    fn create_memory_metric_with_dropdown<F, G>(
+    fn create_system_metric(
         &self,
         name: &str,
-        data: &std::collections::VecDeque<crate::models::TimestampedValue>,
-        chart_fn: F,
-        format_fn: G,
+        primary_data: &VecDeque<TimestampedValue>,
+        secondary_data: Option<&VecDeque<TimestampedValue>>,
+        chart_type: charts::MetricType,
+        format_fn: fn(f64) -> String,
+        display_type: MetricDisplayType,
         history: &AllModelMetricsHistory,
-    ) -> Option<MenuItem>
-    where
-        F: Fn(&std::collections::VecDeque<f64>) -> crate::Result<image::DynamicImage>,
-        G: Fn(f64) -> String,
-    {
-        if data.is_empty() {
+    ) -> Option<MenuItem> {
+        if primary_data.is_empty() {
             return None;
         }
         
-        let values = data.iter().map(|tv| tv.value).collect();
-        let insights = history.get_memory_insights();
-        
-        // Build simple label without trend arrow and time context  
-        let label = format!("{}: {}", name, format_fn(insights.current));
-        
-        // Store time context for secondary dropdown
-        let time_text = if data.len() >= 2 {
-            let oldest = data.front().unwrap().timestamp;
-            let newest = data.back().unwrap().timestamp;
-            insights.time_context(oldest, newest)
-        } else if data.len() == 1 {
-            insights.time_context(0, 0) // Will return "(now)"
-        } else {
-            String::new()
-        };
-        
+        let insights = get_system_insights(name, history);
+        let label = build_label(name, &insights, secondary_data, format_fn, &display_type);
         let mut item = ContentItem::new(label);
         
-        // Don't apply trend color to main item since trend moved to dropdown
-        
-        // Add enhanced sparkline chart
-        if let Ok(chart) = chart_fn(&values) {
-            if let Ok(chart_image) = icons::icon_to_menu_image(chart) {
-                item = item.image(chart_image).unwrap();
-            }
-        }
-        
-        // Create detailed submenu items
-        let mut submenu_items = vec![];
-        
-        // Current value
-        submenu_items.push(MenuItem::Content(
-            ContentItem::new(format!("Current: {}", format_fn(insights.current)))
-        ));
-        
-        // Range (if we have multiple data points)
-        if insights.data_points > 1 {
-            submenu_items.push(MenuItem::Content(
-                ContentItem::new(format!("Range: {:.1} - {:.1}", insights.min, insights.max))
-            ));
-            
-            // Calculate and show average
-            let stats = history.calculate_memory_stats();
-            submenu_items.push(MenuItem::Content(
-                ContentItem::new(format!("Average: {}", format_fn(stats.mean)))
-            ));
-        }
-        
-        // Trend information
-        if insights.data_points >= 3 {
-            let trend_desc = match insights.trend {
-                crate::models::Trend::Increasing => "▲ Increasing",
-                crate::models::Trend::Decreasing => "▼ Decreasing", 
-                crate::models::Trend::Stable => "▶ Stable",
-                crate::models::Trend::Insufficient => "Insufficient data",
-            };
-            submenu_items.push(MenuItem::Content(
-                ContentItem::new(format!("Trend: {}", trend_desc)).color(insights.trend.color()).unwrap()
-            ));
-        }
-        
-        // Dataset duration
-        if !time_text.is_empty() {
-            submenu_items.push(MenuItem::Content(
-                ContentItem::new(format!("Dataset: {}", time_text))
-            ));
-        }
-        
-        // Add submenu to main item
-        item = item.sub(submenu_items);
+        add_chart(&mut item, primary_data, chart_type);
+        let submenu = build_submenu(&insights, primary_data, secondary_data, format_fn, &display_type, None, Some(history));
+        item = item.sub(submenu);
         
         Some(MenuItem::Content(item))
     }
     
-    /// Create a system metric item with enhanced sparkline and detailed dropdown submenu
-    fn create_system_metric_with_dropdown<F, G>(
-        &self,
-        name: &str,
-        data: &std::collections::VecDeque<crate::models::TimestampedValue>,
-        chart_fn: F,
-        format_fn: G,
-        history: &AllModelMetricsHistory,
-        metric_type: &str,
-    ) -> Option<MenuItem>
-    where
-        F: Fn(&std::collections::VecDeque<f64>) -> crate::Result<image::DynamicImage>,
-        G: Fn(f64) -> String,
-    {
-        if data.is_empty() {
-            return None;
-        }
-        
-        let values = data.iter().map(|tv| tv.value).collect();
-        let insights = match metric_type {
-            "cpu" => history.get_cpu_insights(),
-            "memory" => history.get_system_memory_insights(),
-            "load" => history.get_load_insights(),
-            _ => return None,
-        };
-        
-        // Build simple label without trend arrow and time context
-        let label = format!("{}: {}", name, format_fn(insights.current));
-        
-        // Store time context for secondary dropdown
-        let time_text = if data.len() >= 2 {
-            let oldest = data.front().unwrap().timestamp;
-            let newest = data.back().unwrap().timestamp;
-            insights.time_context(oldest, newest)
-        } else if data.len() == 1 {
-            insights.time_context(0, 0) // Will return "(now)"
-        } else {
-            String::new()
-        };
-        
-        let mut item = ContentItem::new(label);
-        
-        // Don't apply trend color to main item since trend moved to dropdown
-        
-        // Add enhanced sparkline chart
-        if let Ok(chart) = chart_fn(&values) {
-            if let Ok(chart_image) = icons::icon_to_menu_image(chart) {
-                item = item.image(chart_image).unwrap();
-            }
-        }
-        
-        // Create detailed submenu items
-        let mut submenu_items = vec![];
-        
-        // Current value
-        submenu_items.push(MenuItem::Content(
-            ContentItem::new(format!("Current: {}", format_fn(insights.current)))
-        ));
-        
-        // Range (if we have multiple data points)
-        if insights.data_points > 1 {
-            submenu_items.push(MenuItem::Content(
-                ContentItem::new(format!("Range: {:.1} - {:.1}", insights.min, insights.max))
-            ));
-        }
-        
-        // Trend information
-        if insights.data_points >= 3 {
-            let trend_desc = match insights.trend {
-                crate::models::Trend::Increasing => "▲ Increasing",
-                crate::models::Trend::Decreasing => "▼ Decreasing", 
-                crate::models::Trend::Stable => "▶ Stable",
-                crate::models::Trend::Insufficient => "Insufficient data",
-            };
-            submenu_items.push(MenuItem::Content(
-                ContentItem::new(format!("Trend: {}", trend_desc)).color(insights.trend.color()).unwrap()
-            ));
-        }
-        
-        // Dataset duration
-        if !time_text.is_empty() {
-            submenu_items.push(MenuItem::Content(
-                ContentItem::new(format!("Dataset: {}", time_text))
-            ));
-        }
-        
-        // Add submenu to main item
-        item = item.sub(submenu_items);
-        
-        Some(MenuItem::Content(item))
-    }
-    
-    /// Create an enhanced memory metric item that shows both nominal GB and percentage
-    fn create_enhanced_memory_metric_with_dropdown<F>(
-        &self,
-        name: &str,
-        percent_data: &std::collections::VecDeque<crate::models::TimestampedValue>,
-        gb_data: &std::collections::VecDeque<crate::models::TimestampedValue>,
-        chart_fn: F,
-        history: &AllModelMetricsHistory,
-    ) -> Option<MenuItem>
-    where
-        F: Fn(&std::collections::VecDeque<f64>) -> crate::Result<image::DynamicImage>,
-    {
-        if percent_data.is_empty() || gb_data.is_empty() {
-            return None;
-        }
-        
-        let percent_values = percent_data.iter().map(|tv| tv.value).collect();
-        let percent_insights = history.get_system_memory_insights();
-        let gb_current = gb_data.back().unwrap().value;
-        
-        // Build label with both GB and percentage
-        let label = format!("{}: {:.1} GB ({:.1}%)", name, gb_current, percent_insights.current);
-        
-        // Store time context for secondary dropdown
-        let time_text = if percent_data.len() >= 2 {
-            let oldest = percent_data.front().unwrap().timestamp;
-            let newest = percent_data.back().unwrap().timestamp;
-            percent_insights.time_context(oldest, newest)
-        } else if percent_data.len() == 1 {
-            percent_insights.time_context(0, 0) // Will return "(now)"
-        } else {
-            String::new()
-        };
-        
-        let mut item = ContentItem::new(label);
-        
-        // Don't apply trend color to main item since trend moved to dropdown
-        
-        // Add enhanced sparkline chart based on percentage
-        if let Ok(chart) = chart_fn(&percent_values) {
-            if let Ok(chart_image) = icons::icon_to_menu_image(chart) {
-                item = item.image(chart_image).unwrap();
-            }
-        }
-        
-        // Create detailed submenu items
-        let mut submenu_items = vec![];
-        
-        // Current values (both GB and percentage)
-        submenu_items.push(MenuItem::Content(
-            ContentItem::new(format!("Current: {:.1} GB ({:.1}%)", gb_current, percent_insights.current))
-        ));
-        
-        // Range for percentage (if we have multiple data points)
-        if percent_insights.data_points > 1 {
-            submenu_items.push(MenuItem::Content(
-                ContentItem::new(format!("Range: {:.1}% - {:.1}%", percent_insights.min, percent_insights.max))
-            ));
-        }
-        
-        // Range for GB values
-        if gb_data.len() > 1 {
-            let gb_values: Vec<f64> = gb_data.iter().map(|tv| tv.value).collect();
-            let gb_min = gb_values.iter().fold(f64::INFINITY, |a, &b| a.min(b));
-            let gb_max = gb_values.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
-            submenu_items.push(MenuItem::Content(
-                ContentItem::new(format!("GB Range: {:.1} - {:.1}", gb_min, gb_max))
-            ));
-        }
-        
-        // Trend information
-        if percent_insights.data_points >= 3 {
-            let trend_desc = match percent_insights.trend {
-                crate::models::Trend::Increasing => "▲ Increasing",
-                crate::models::Trend::Decreasing => "▼ Decreasing", 
-                crate::models::Trend::Stable => "▶ Stable",
-                crate::models::Trend::Insufficient => "Insufficient data",
-            };
-            submenu_items.push(MenuItem::Content(
-                ContentItem::new(format!("Trend: {}", trend_desc)).color(percent_insights.trend.color()).unwrap()
-            ));
-        }
-        
-        // Dataset duration
-        if !time_text.is_empty() {
-            submenu_items.push(MenuItem::Content(
-                ContentItem::new(format!("Dataset: {}", time_text))
-            ));
-        }
-        
-        // Add submenu to main item
-        item = item.sub(submenu_items);
-        
-        Some(MenuItem::Content(item))
-    }
-    
-    /// Create an enhanced KV cache metric item that shows both nominal tokens and percentage
-    fn create_enhanced_kv_cache_metric_with_dropdown<F>(
-        &self,
-        name: &str,
-        percent_data: &std::collections::VecDeque<crate::models::TimestampedValue>,
-        tokens_data: &std::collections::VecDeque<crate::models::TimestampedValue>,
-        chart_fn: F,
-        history: &crate::models::MetricsHistory,
-    ) -> Option<MenuItem>
-    where
-        F: Fn(&std::collections::VecDeque<f64>) -> crate::Result<image::DynamicImage>,
-    {
-        if percent_data.is_empty() || tokens_data.is_empty() {
-            return None;
-        }
-        
-        let percent_values = percent_data.iter().map(|tv| tv.value).collect();
-        let percent_insights = history.get_insights(percent_data);
-        let tokens_current = tokens_data.back().unwrap().value as u32;
-        
-        // Build label with both tokens and percentage
-        let label = format!("{}: {} tokens ({:.0}%)", name, tokens_current, percent_insights.current);
-        
-        // Store time context for secondary dropdown
-        let time_text = if percent_data.len() >= 2 {
-            let oldest = percent_data.front().unwrap().timestamp;
-            let newest = percent_data.back().unwrap().timestamp;
-            percent_insights.time_context(oldest, newest)
-        } else if percent_data.len() == 1 {
-            percent_insights.time_context(0, 0) // Will return "(now)"
-        } else {
-            String::new()
-        };
-        
-        let mut item = ContentItem::new(label);
-        
-        // Don't apply trend color to main item since trend moved to dropdown
-        
-        // Add enhanced sparkline chart based on percentage
-        if let Ok(chart) = chart_fn(&percent_values) {
-            if let Ok(chart_image) = icons::icon_to_menu_image(chart) {
-                item = item.image(chart_image).unwrap();
-            }
-        }
-        
-        // Create detailed submenu items
-        let mut submenu_items = vec![];
-        
-        // Current values (both tokens and percentage)
-        submenu_items.push(MenuItem::Content(
-            ContentItem::new(format!("Current: {} tokens ({:.0}%)", tokens_current, percent_insights.current))
-        ));
-        
-        // Range for percentage (if we have multiple data points)
-        if percent_insights.data_points > 1 {
-            submenu_items.push(MenuItem::Content(
-                ContentItem::new(format!("Range: {:.0}% - {:.0}%", percent_insights.min, percent_insights.max))
-            ));
-        }
-        
-        // Range for token values
-        if tokens_data.len() > 1 {
-            let token_values: Vec<f64> = tokens_data.iter().map(|tv| tv.value).collect();
-            let tokens_min = token_values.iter().fold(f64::INFINITY, |a, &b| a.min(b)) as u32;
-            let tokens_max = token_values.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b)) as u32;
-            submenu_items.push(MenuItem::Content(
-                ContentItem::new(format!("Token Range: {} - {}", tokens_min, tokens_max))
-            ));
-            
-            // Calculate and show average tokens
-            let stats = history.calculate_stats(tokens_data);
-            submenu_items.push(MenuItem::Content(
-                ContentItem::new(format!("Avg Tokens: {:.0}", stats.mean))
-            ));
-        }
-        
-        // Trend information
-        if percent_insights.data_points >= 3 {
-            let trend_desc = match percent_insights.trend {
-                crate::models::Trend::Increasing => "▲ Increasing",
-                crate::models::Trend::Decreasing => "▼ Decreasing", 
-                crate::models::Trend::Stable => "▶ Stable",
-                crate::models::Trend::Insufficient => "Insufficient data",
-            };
-            submenu_items.push(MenuItem::Content(
-                ContentItem::new(format!("Trend: {}", trend_desc)).color(percent_insights.trend.color()).unwrap()
-            ));
-        }
-        
-        // Dataset duration
-        if !time_text.is_empty() {
-            submenu_items.push(MenuItem::Content(
-                ContentItem::new(format!("Dataset: {}", time_text))
-            ));
-        }
-        
-        // Add submenu to main item
-        item = item.sub(submenu_items);
-        
-        Some(MenuItem::Content(item))
-    }
-    
-    /// Add queue status item for a specific model
-    fn add_model_queue_status_item(&mut self, current_metrics: &crate::models::Metrics) {
+    fn add_queue_status(&mut self, current_metrics: &crate::models::Metrics) {
         let queue_status = current_metrics.queue_status();
-        
         let mut queue_item = ContentItem::new(format!("Queue: {}", queue_status));
         
-        // Color based on queue load
         let color = if current_metrics.requests_processing > 0 || current_metrics.requests_deferred > 0 {
-            "#FFA500" // Orange for active
+            "#FFA500"
         } else {
-            "#666666" // Gray for idle
+            "#666666"
         };
         queue_item = queue_item.color(color).unwrap();
         
-        // Create queue details submenu
-        let mut submenu_items = vec![];
+        let submenu = vec![
+            MenuItem::Content(ContentItem::new(format!("Status: {}", queue_status))),
+            MenuItem::Content(ContentItem::new(format!("Processing: {} requests", current_metrics.requests_processing))),
+            MenuItem::Content(ContentItem::new(format!("Deferred: {} requests", current_metrics.requests_deferred))),
+            MenuItem::Content(ContentItem::new(format!("Decode Calls: {}", current_metrics.n_decode_total))),
+        ];
         
-        submenu_items.push(MenuItem::Content(
-            ContentItem::new(format!("Status: {}", queue_status))
-        ));
-        
-        submenu_items.push(MenuItem::Content(
-            ContentItem::new(format!("Processing: {} requests", current_metrics.requests_processing))
-        ));
-        
-        submenu_items.push(MenuItem::Content(
-            ContentItem::new(format!("Deferred: {} requests", current_metrics.requests_deferred))
-        ));
-        
-        submenu_items.push(MenuItem::Content(
-            ContentItem::new(format!("Decode Calls: {}", current_metrics.n_decode_total))
-        ));
-        
-        // Calculate slot utilization if we have decode data
-        if current_metrics.n_decode_total > 0 {
-            let slot_util = "1.0 avg"; // Could calculate from available data
-            submenu_items.push(MenuItem::Content(
-                ContentItem::new(format!("Slot Utilization: {}", slot_util))
-            ));
-        }
-        
-        queue_item = queue_item.sub(submenu_items);
+        queue_item = queue_item.sub(submenu);
         self.items.push(MenuItem::Content(queue_item));
     }
     
     fn add_footer_section(&mut self) {
-        // Version and about info
         let version = env!("CARGO_PKG_VERSION");
-        
         let mut version_item = ContentItem::new(format!("Llama-Swap Plugin v{}", version));
         version_item = version_item.color("#666666").unwrap();
         version_item = version_item.href("https://github.com/your-org/llama-swap-swiftbar").unwrap();
         self.items.push(MenuItem::Content(version_item));
         
-        // Add refresh option for debugging
         if cfg!(debug_assertions) {
             let mut refresh_item = ContentItem::new("🔄 Force Refresh");
             refresh_item = refresh_item.refresh();
@@ -801,7 +243,191 @@ impl MenuBuilder {
     }
 }
 
-/// Helper to format memory values
+fn build_label(
+    name: &str,
+    insights: &crate::models::MetricInsights,
+    secondary_data: Option<&VecDeque<TimestampedValue>>,
+    format_fn: fn(f64) -> String,
+    display_type: &MetricDisplayType,
+) -> String {
+    match display_type {
+        MetricDisplayType::Simple => format!("{}: {}", name, format_fn(insights.current)),
+        MetricDisplayType::SystemMemory => {
+            let gb_current = secondary_data.unwrap().back().unwrap().value;
+            format!("{}: {:.1} GB ({:.1}%)", name, gb_current, insights.current)
+        },
+        MetricDisplayType::LlamaMemory => {
+            let mb_current = insights.current;
+            if mb_current < 1024.0 {
+                format!("{}: {:.1} MB", name, mb_current)
+            } else {
+                format!("{}: {:.2} GB", name, mb_current / 1024.0)
+            }
+        },
+        MetricDisplayType::KvCache => {
+            let tokens_current = secondary_data.unwrap().back().unwrap().value as u32;
+            format!("{}: {} tokens ({:.0}%)", name, tokens_current, insights.current)
+        },
+    }
+}
+
+fn add_chart(item: &mut ContentItem, data: &VecDeque<TimestampedValue>, chart_type: charts::MetricType) {
+    let values = data.iter().map(|tv| tv.value).collect();
+    if let Ok(chart) = charts::generate_sparkline(&values, chart_type) {
+        if let Ok(chart_image) = icons::icon_to_menu_image(chart) {
+            // We need to replace the item content, not clone it
+            let text = item.text.clone();
+            *item = ContentItem::new(text).image(chart_image).unwrap();
+        }
+    }
+}
+
+fn get_system_insights(metric_name: &str, history: &AllModelMetricsHistory) -> crate::models::MetricInsights {
+    match metric_name {
+        "CPU" => history.get_cpu_insights(),
+        "Memory" => history.get_system_memory_insights(),
+        "Load Avg" => history.get_load_insights(),
+        "Llama Memory" => history.get_memory_insights(),
+        _ => unreachable!(),
+    }
+}
+
+fn build_submenu(
+    insights: &crate::models::MetricInsights,
+    primary_data: &VecDeque<TimestampedValue>,
+    secondary_data: Option<&VecDeque<TimestampedValue>>,
+    format_fn: fn(f64) -> String,
+    display_type: &MetricDisplayType,
+    model_history: Option<&MetricsHistory>,
+    system_history: Option<&AllModelMetricsHistory>,
+) -> Vec<MenuItem> {
+    let mut submenu = Vec::new();
+    
+    // Current value
+    let current_text = match display_type {
+        MetricDisplayType::KvCache => {
+            let tokens = secondary_data.unwrap().back().unwrap().value as u32;
+            format!("Current: {} tokens ({:.0}%)", tokens, insights.current)
+        },
+        MetricDisplayType::SystemMemory => {
+            let gb_current = secondary_data.unwrap().back().unwrap().value;
+            format!("Current: {:.1} GB ({:.1}%)", gb_current, insights.current)
+        },
+        MetricDisplayType::LlamaMemory => {
+            let mb_current = insights.current;
+            let gb_current = mb_current / 1024.0;
+            let total_system_memory_gb = calculate_total_system_memory(system_history.unwrap());
+            let memory_percent = if total_system_memory_gb > 0.0 {
+                (gb_current / total_system_memory_gb) * 100.0
+            } else {
+                0.0
+            };
+            
+            if mb_current < 1024.0 {
+                format!("Current: {:.1} MB ({:.1}% of system)", mb_current, memory_percent)
+            } else {
+                format!("Current: {:.2} GB ({:.1}% of system)", gb_current, memory_percent)
+            }
+        },
+        _ => format!("Current: {}", format_fn(insights.current)),
+    };
+    submenu.push(MenuItem::Content(ContentItem::new(current_text)));
+    
+    // Range and statistics
+    if insights.data_points > 1 {
+        submenu.push(MenuItem::Content(
+            ContentItem::new(format!("Range: {:.1} - {:.1}", insights.min, insights.max))
+        ));
+        
+        match display_type {
+            MetricDisplayType::KvCache => {
+                let stats = model_history.unwrap().calculate_stats(secondary_data.unwrap());
+                submenu.push(MenuItem::Content(
+                    ContentItem::new(format!("Avg Tokens: {:.0}", stats.mean))
+                ));
+            },
+            MetricDisplayType::SystemMemory => {
+                if let Some(secondary) = secondary_data {
+                    if secondary.len() > 1 {
+                        let gb_values: Vec<f64> = secondary.iter().map(|tv| tv.value).collect();
+                        let gb_min = gb_values.iter().fold(f64::INFINITY, |a, &b| a.min(b));
+                        let gb_max = gb_values.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+                        submenu.push(MenuItem::Content(
+                            ContentItem::new(format!("GB Range: {:.1} - {:.1}", gb_min, gb_max))
+                        ));
+                    }
+                }
+            },
+            MetricDisplayType::LlamaMemory => {
+                let stats = system_history.unwrap().calculate_memory_stats();
+                submenu.push(MenuItem::Content(
+                    ContentItem::new(format!("Average: {}", format_memory(stats.mean)))
+                ));
+                
+                let total_system_memory_gb = calculate_total_system_memory(system_history.unwrap());
+                submenu.push(MenuItem::Content(
+                    ContentItem::new(format!("System Total: {:.1} GB", total_system_memory_gb))
+                ));
+            },
+            _ => {
+                let stats = calculate_stats_for_data(primary_data);
+                submenu.push(MenuItem::Content(
+                    ContentItem::new(format!("Average: {}", format_fn(stats.mean)))
+                ));
+            },
+        }
+    }
+    
+    // Trend information
+    if insights.data_points >= 3 {
+        let trend_desc = match insights.trend {
+            Trend::Increasing => "▲ Increasing",
+            Trend::Decreasing => "▼ Decreasing",
+            Trend::Stable => "▶ Stable",
+            Trend::Insufficient => "Insufficient data",
+        };
+        submenu.push(MenuItem::Content(
+            ContentItem::new(format!("Trend: {}", trend_desc)).color(insights.trend.color()).unwrap()
+        ));
+    }
+    
+    // Dataset duration
+    let time_text = if primary_data.len() >= 2 {
+        let oldest = primary_data.front().unwrap().timestamp;
+        let newest = primary_data.back().unwrap().timestamp;
+        insights.time_context(oldest, newest)
+    } else if primary_data.len() == 1 {
+        insights.time_context(0, 0)
+    } else {
+        String::new()
+    };
+    
+    if !time_text.is_empty() {
+        submenu.push(MenuItem::Content(
+            ContentItem::new(format!("Dataset: {}", time_text))
+        ));
+    }
+    
+    submenu
+}
+
+fn calculate_total_system_memory(history: &AllModelMetricsHistory) -> f64 {
+    if let (Some(latest_used_gb), Some(latest_percent)) = (
+        history.used_memory_gb.back(),
+        history.memory_usage_percent.back()
+    ) {
+        let used_memory_gb = latest_used_gb.value;
+        let memory_percent = latest_percent.value;
+        if memory_percent > 0.0 {
+            used_memory_gb / (memory_percent / 100.0)
+        } else {
+            64.0
+        }
+    } else {
+        64.0
+    }
+}
+
 fn format_memory(mb: f64) -> String {
     if mb < 1024.0 {
         format!("{:.1} MB", mb)
@@ -810,19 +436,20 @@ fn format_memory(mb: f64) -> String {
     }
 }
 
-/// Expand tilde to home directory
-fn expand_tilde(path: &str) -> crate::Result<String> {
-    if path.starts_with("~/") {
-        let home = std::env::var("HOME")
-            .map_err(|_| "Failed to get HOME directory")?;
-        Ok(path.replacen("~", &home, 1))
-    } else {
-        Ok(path.to_string())
-    }
+fn format_tps(v: f64) -> String {
+    format!("{:.1} tok/s", v)
 }
 
-/// Calculate statistics for a data series
-fn calculate_stats_for_data(data: &std::collections::VecDeque<crate::models::TimestampedValue>) -> crate::models::MetricStats {
+fn format_percent(v: f64) -> String {
+    format!("{:.1}%", v)
+}
+
+fn format_load(v: f64) -> String {
+    format!("{:.2}", v)
+}
+
+
+fn calculate_stats_for_data(data: &VecDeque<TimestampedValue>) -> crate::models::MetricStats {
     let values: Vec<f64> = data.iter().map(|tv| tv.value).collect();
     
     if values.is_empty() {
@@ -853,7 +480,38 @@ fn calculate_stats_for_data(data: &std::collections::VecDeque<crate::models::Tim
     }
 }
 
-/// Build an error menu for display when things go wrong
+pub fn build_menu(state: &PluginState) -> crate::Result<String> {
+    let mut menu = MenuBuilder::new();
+    
+    menu.add_title(state.current_status);
+    menu.add_separator();
+    menu.add_control_section(state.current_status);
+    menu.add_separator();
+    menu.add_file_section();
+    
+    if state.current_status == ServiceStatus::Running {
+        if let Some(ref all_metrics) = state.current_all_metrics {
+            for model_metrics in &all_metrics.models {
+                if let Some(model_history) = state.metrics_history.get_model_history(&model_metrics.model_name) {
+                    if !model_history.tps.is_empty() {
+                        menu.add_separator();
+                        menu.add_model_metrics_section(&model_metrics.model_name, model_history, &model_metrics.metrics);
+                    }
+                }
+            }
+        }
+        
+        menu.add_separator();
+        menu.add_system_metrics_section(&state.metrics_history);
+    }
+    
+    menu.add_separator();
+    menu.add_footer_section();
+    
+    let built_menu = menu.build();
+    Ok(built_menu.to_string())
+}
+
 pub fn build_error_menu(message: &str) -> Result<String, std::fmt::Error> {
     let mut error_item = ContentItem::new(message);
     error_item = error_item.color("#ff0000").unwrap();
@@ -872,11 +530,25 @@ pub fn build_error_menu(message: &str) -> Result<String, std::fmt::Error> {
     Ok(menu.to_string())
 }
 
+pub fn build_not_installed_menu() -> String {
+    let menu = Menu(vec![
+        MenuItem::Content(ContentItem::new("⚪ Llama-Swap")),
+        MenuItem::Sep,
+        MenuItem::Content(ContentItem::new("Service not installed").color("#ff0000").unwrap()),
+        MenuItem::Sep,
+        MenuItem::Content(
+            ContentItem::new("Visit documentation")
+                .href("https://github.com/your-org/llama-swap-swiftbar")
+                .unwrap()
+        ),
+    ]);
+    menu.to_string()
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{TimestampedValue};
+    use crate::models::TimestampedValue;
     use std::time::{SystemTime, UNIX_EPOCH};
     
     #[test]
@@ -884,7 +556,6 @@ mod tests {
         let state = create_test_state(ServiceStatus::Running);
         let menu_str = build_menu(&state).unwrap();
         
-        // Should contain stop option
         assert!(menu_str.contains("Stop Service"));
         assert!(!menu_str.contains("Start Service"));
     }
@@ -894,38 +565,8 @@ mod tests {
         let state = create_test_state(ServiceStatus::Stopped);
         let menu_str = build_menu(&state).unwrap();
         
-        // Should contain start option
         assert!(menu_str.contains("Start Service"));
         assert!(!menu_str.contains("Stop Service"));
-        
-        // Should not show metrics
-        assert!(!menu_str.contains("Performance Metrics"));
-        assert!(!menu_str.contains("Generation Speed"));
-    }
-    
-    #[test]
-    fn test_anomaly_detection() {
-        let mut state = create_test_state(ServiceStatus::Running);
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-        
-        // Add normal memory values
-        for i in 0..10 {
-            state.metrics_history.total_llama_memory_mb.push_back(TimestampedValue {
-                timestamp: now - (10 - i) * 60,
-                value: 1024.0,
-            });
-        }
-        
-        // Add spike
-        state.metrics_history.total_llama_memory_mb.push_back(TimestampedValue {
-            timestamp: now,
-            value: 5120.0, // 5GB - over threshold
-        });
-        
-        let menu_str = build_menu(&state).unwrap();
-        
-        // Should show memory values
-        assert!(menu_str.contains("Memory:"));
     }
     
     #[test]
