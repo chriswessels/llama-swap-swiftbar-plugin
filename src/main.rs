@@ -7,7 +7,7 @@ mod icons;
 mod commands;
 mod service;
 
-use crate::models::{MetricsHistory, ServiceStatus};
+use crate::models::{AllModelMetricsHistory, ServiceStatus, AllModelMetrics};
 use reqwest::blocking::Client;
 use std::error::Error;
 use std::io::{self, Write};
@@ -45,9 +45,9 @@ impl PollingMode {
 
 pub struct PluginState {
     pub http_client: Client,
-    pub metrics_history: MetricsHistory,
+    pub metrics_history: AllModelMetricsHistory,
     pub current_status: ServiceStatus,
-    pub current_metrics: Option<models::Metrics>,
+    pub current_all_metrics: Option<AllModelMetrics>,
     pub error_count: usize,
     pub polling_mode: PollingMode,
     pub last_status: ServiceStatus,
@@ -62,13 +62,13 @@ impl PluginState {
             .build()?;
         
         // Create new metrics history
-        let metrics_history = MetricsHistory::new();
+        let metrics_history = AllModelMetricsHistory::new();
 
         Ok(Self {
             http_client,
             metrics_history,
             current_status: ServiceStatus::Unknown,
-            current_metrics: None,
+            current_all_metrics: None,
             error_count: 0,
             polling_mode: PollingMode::Starting, // Start with faster polling
             last_status: ServiceStatus::Unknown,
@@ -105,9 +105,11 @@ impl PluginState {
         }
         
         // Check if service is actively processing requests
-        if let Some(ref metrics) = self.current_metrics {
-            if metrics.requests_processing > 0 || metrics.requests_deferred > 0 {
-                return PollingMode::Active;
+        if let Some(ref all_metrics) = self.current_all_metrics {
+            for model_metrics in &all_metrics.models {
+                if model_metrics.metrics.requests_processing > 0 || model_metrics.metrics.requests_deferred > 0 {
+                    return PollingMode::Active;
+                }
             }
         }
         
@@ -124,12 +126,18 @@ impl PluginState {
             return format!("status changed: {:?} -> {:?}", self.last_status, self.current_status);
         }
         
-        if let Some(ref metrics) = self.current_metrics {
-            if metrics.requests_processing > 0 {
-                return format!("processing {} requests", metrics.requests_processing);
+        if let Some(ref all_metrics) = self.current_all_metrics {
+            let mut total_processing = 0;
+            let mut total_deferred = 0;
+            for model_metrics in &all_metrics.models {
+                total_processing += model_metrics.metrics.requests_processing;
+                total_deferred += model_metrics.metrics.requests_deferred;
             }
-            if metrics.requests_deferred > 0 {
-                return format!("{} requests queued", metrics.requests_deferred);
+            if total_processing > 0 {
+                return format!("processing {} requests", total_processing);
+            }
+            if total_deferred > 0 {
+                return format!("{} requests queued", total_deferred);
             }
         }
         
@@ -183,7 +191,7 @@ fn render_frame(state: &mut PluginState) -> Result<String> {
         http_client: state.http_client.clone(),
         metrics_history: state.metrics_history.clone(),
         current_status: state.current_status,
-        current_metrics: state.current_metrics.clone(),
+        current_all_metrics: state.current_all_metrics.clone(),
         error_count: state.error_count,
     };
     
@@ -266,12 +274,12 @@ fn update_state(state: &mut PluginState) {
     state.last_status = state.current_status;
     
     // Primary check: try to fetch metrics
-    match metrics::fetch_metrics(&state.http_client) {
-        Ok(metrics) => {
+    match metrics::fetch_all_model_metrics(&state.http_client) {
+        Ok(all_metrics) => {
             // Service is running and responsive
             state.current_status = ServiceStatus::Running;
-            state.metrics_history.push(&metrics);
-            state.current_metrics = Some(metrics);
+            state.metrics_history.push(&all_metrics);
+            state.current_all_metrics = Some(all_metrics);
             state.error_count = 0; // Reset error count on success
         }
         Err(e) => {
@@ -289,7 +297,7 @@ fn update_state(state: &mut PluginState) {
             }
             
             // Clear metrics when service is not responsive
-            state.current_metrics = None;
+            state.current_all_metrics = None;
         }
     }
     

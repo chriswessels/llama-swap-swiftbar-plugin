@@ -1,14 +1,14 @@
 use bitbar::{Menu, MenuItem, ContentItem, attr};
 use crate::{icons, charts, constants};
-use crate::models::{ServiceStatus, MetricsHistory, Metrics};
+use crate::models::{ServiceStatus, AllModelMetricsHistory, AllModelMetrics, MetricsHistory};
 use reqwest::blocking::Client;
 
 // PluginState for menu display - mirrors main::PluginState
 pub struct PluginState {
     pub http_client: Client,
-    pub metrics_history: MetricsHistory,
+    pub metrics_history: AllModelMetricsHistory,
     pub current_status: ServiceStatus,
-    pub current_metrics: Option<Metrics>,
+    pub current_all_metrics: Option<AllModelMetrics>,
     pub error_count: usize,
 }
 
@@ -26,10 +26,28 @@ pub fn build_menu(state: &PluginState) -> crate::Result<String> {
     menu.add_separator();
     menu.add_file_section();
     
-    // Only show metrics if service is running
-    if state.current_status == ServiceStatus::Running && !state.metrics_history.tps.is_empty() {
+    // Show metrics for each running model
+    if state.current_status == ServiceStatus::Running {
+        if let Some(ref all_metrics) = state.current_all_metrics {
+            for model_metrics in &all_metrics.models {
+                if let Some(model_history) = state.metrics_history.get_model_history(&model_metrics.model_name) {
+                    if !model_history.tps.is_empty() {
+                        menu.add_separator();
+                        menu.add_model_metrics_section(&model_metrics.model_name, model_history, &model_metrics.metrics);
+                    }
+                }
+            }
+        }
+        
+        // Add system metrics section
         menu.add_separator();
-        menu.add_metrics_section(&state.metrics_history, state);
+        menu.add_system_metrics_section(&state.metrics_history);
+        
+        // Add llama memory section if we have any models
+        if !state.metrics_history.total_llama_memory_mb.is_empty() {
+            menu.add_separator();
+            menu.add_llama_memory_section(&state.metrics_history);
+        }
     }
     
     // Add footer section
@@ -128,9 +146,9 @@ impl MenuBuilder {
         self.items.push(MenuItem::Content(edit_config));
     }
     
-    fn add_metrics_section(&mut self, history: &MetricsHistory, state: &PluginState) {
-        // Section header
-        let mut header = ContentItem::new("Performance Metrics");
+    fn add_model_metrics_section(&mut self, model_name: &str, history: &MetricsHistory, current_metrics: &crate::models::Metrics) {
+        // Section header with model name
+        let mut header = ContentItem::new(model_name);
         header = header.color("#666666").unwrap();
         self.items.push(MenuItem::Content(header));
         
@@ -167,19 +185,77 @@ impl MenuBuilder {
             self.items.push(item);
         }
         
+        // Queue Status (simple display, no sparkline needed)
+        self.add_model_queue_status_item(current_metrics);
+    }
+    
+    fn add_system_metrics_section(&mut self, history: &AllModelMetricsHistory) {
+        // Section header
+        let mut header = ContentItem::new("System Metrics");
+        header = header.color("#666666").unwrap();
+        self.items.push(MenuItem::Content(header));
+        
+        // CPU usage
+        if !history.cpu_usage_percent.is_empty() {
+            if let Some(item) = self.create_system_metric_with_dropdown(
+                "CPU",
+                &history.cpu_usage_percent,
+                charts::generate_tps_sparkline, // Reuse TPS sparkline for percentages
+                |v| format!("{:.1}%", v),
+                history,
+                "cpu",
+            ) {
+                self.items.push(item);
+            }
+        }
+        
+        // System memory usage (percentage)
+        if !history.memory_usage_percent.is_empty() {
+            if let Some(item) = self.create_system_metric_with_dropdown(
+                "Memory",
+                &history.memory_usage_percent,
+                charts::generate_memory_sparkline,
+                |v| format!("{:.1}%", v),
+                history,
+                "memory",
+            ) {
+                self.items.push(item);
+            }
+        }
+        
+        // Load average
+        if !history.load_average_1m.is_empty() {
+            if let Some(item) = self.create_system_metric_with_dropdown(
+                "Load Avg",
+                &history.load_average_1m,
+                charts::generate_prompt_sparkline, // Reuse prompt sparkline
+                |v| format!("{:.2}", v),
+                history,
+                "load",
+            ) {
+                self.items.push(item);
+            }
+        }
+        
+        // GPU metrics removed - powermetrics was too expensive and unreliable
+    }
+    
+    fn add_llama_memory_section(&mut self, history: &AllModelMetricsHistory) {
+        // Section header
+        let mut header = ContentItem::new("Llama Memory");
+        header = header.color("#666666").unwrap();
+        self.items.push(MenuItem::Content(header));
+        
         // Memory with dropdown details
-        if let Some(item) = self.create_metric_with_dropdown(
+        if let Some(item) = self.create_memory_metric_with_dropdown(
             "Memory",
-            &history.memory_mb,
+            &history.total_llama_memory_mb,
             charts::generate_memory_sparkline,
             |v| format_memory(v),
             history,
         ) {
             self.items.push(item);
         }
-        
-        // Queue Status (simple display, no sparkline needed)
-        self.add_queue_status_item(state);
     }
 
     /// Create a metric item with enhanced sparkline and detailed dropdown submenu
@@ -279,51 +355,243 @@ impl MenuBuilder {
         Some(MenuItem::Content(item))
     }
     
-    /// Add queue status item with detailed dropdown
-    fn add_queue_status_item(&mut self, state: &PluginState) {
-        if let Some(ref current_metrics) = state.current_metrics {
-            let queue_status = current_metrics.queue_status();
-            
-            let mut queue_item = ContentItem::new(format!("Queue: {}", queue_status));
-            
-            // Color based on queue load
-            let color = if current_metrics.requests_processing > 0 || current_metrics.requests_deferred > 0 {
-                "#FFA500" // Orange for active
-            } else {
-                "#666666" // Gray for idle
-            };
-            queue_item = queue_item.color(color).unwrap();
-            
-            // Create queue details submenu
-            let mut submenu_items = vec![];
-            
-            submenu_items.push(MenuItem::Content(
-                ContentItem::new(format!("Status: {}", queue_status))
-            ));
-            
-            submenu_items.push(MenuItem::Content(
-                ContentItem::new(format!("Processing: {} requests", current_metrics.requests_processing))
-            ));
-            
-            submenu_items.push(MenuItem::Content(
-                ContentItem::new(format!("Deferred: {} requests", current_metrics.requests_deferred))
-            ));
-            
-            submenu_items.push(MenuItem::Content(
-                ContentItem::new(format!("Decode Calls: {}", current_metrics.n_decode_total))
-            ));
-            
-            // Calculate slot utilization if we have decode data
-            if current_metrics.n_decode_total > 0 {
-                let slot_util = "1.0 avg"; // Could calculate from available data
-                submenu_items.push(MenuItem::Content(
-                    ContentItem::new(format!("Slot Utilization: {}", slot_util))
-                ));
-            }
-            
-            queue_item = queue_item.sub(submenu_items);
-            self.items.push(MenuItem::Content(queue_item));
+    /// Create a memory metric item with enhanced sparkline and detailed dropdown submenu
+    fn create_memory_metric_with_dropdown<F, G>(
+        &self,
+        name: &str,
+        data: &std::collections::VecDeque<crate::models::TimestampedValue>,
+        chart_fn: F,
+        format_fn: G,
+        history: &AllModelMetricsHistory,
+    ) -> Option<MenuItem>
+    where
+        F: Fn(&std::collections::VecDeque<f64>) -> crate::Result<image::DynamicImage>,
+        G: Fn(f64) -> String,
+    {
+        if data.is_empty() {
+            return None;
         }
+        
+        let values = data.iter().map(|tv| tv.value).collect();
+        let insights = history.get_memory_insights();
+        
+        // Build enhanced label with trend arrow and range context
+        let mut label = format!("{}: {}", name, format_fn(insights.current));
+        
+        // Add trend arrow
+        if insights.data_points >= 3 {
+            label.push_str(&format!(" {}", insights.trend.as_arrow()));
+        }
+        
+        // Add time context using actual timestamps
+        let time_text = if data.len() >= 2 {
+            let oldest = data.front().unwrap().timestamp;
+            let newest = data.back().unwrap().timestamp;
+            insights.time_context(oldest, newest)
+        } else if data.len() == 1 {
+            insights.time_context(0, 0) // Will return "(now)"
+        } else {
+            String::new()
+        };
+        
+        if !time_text.is_empty() {
+            label.push_str(&format!(" {}", time_text));
+        }
+        
+        let mut item = ContentItem::new(label);
+        
+        // Apply trend color to the text
+        if insights.data_points >= 3 {
+            item = item.color(insights.trend.color()).unwrap();
+        }
+        
+        // Add enhanced sparkline chart
+        if let Ok(chart) = chart_fn(&values) {
+            if let Ok(chart_image) = icons::icon_to_menu_image(chart) {
+                item = item.image(chart_image).unwrap();
+            }
+        }
+        
+        // Create detailed submenu items
+        let mut submenu_items = vec![];
+        
+        // Current value
+        submenu_items.push(MenuItem::Content(
+            ContentItem::new(format!("Current: {}", format_fn(insights.current)))
+        ));
+        
+        // Range (if we have multiple data points)
+        if insights.data_points > 1 {
+            submenu_items.push(MenuItem::Content(
+                ContentItem::new(format!("Range: {:.1} - {:.1}", insights.min, insights.max))
+            ));
+            
+            // Calculate and show average
+            let stats = history.calculate_memory_stats();
+            submenu_items.push(MenuItem::Content(
+                ContentItem::new(format!("Average: {}", format_fn(stats.mean)))
+            ));
+        }
+        
+        // Trend information
+        if insights.data_points >= 3 {
+            let trend_desc = match insights.trend {
+                crate::models::Trend::Increasing => "▲ Increasing",
+                crate::models::Trend::Decreasing => "▼ Decreasing", 
+                crate::models::Trend::Stable => "▶ Stable",
+                crate::models::Trend::Insufficient => "Insufficient data",
+            };
+            submenu_items.push(MenuItem::Content(
+                ContentItem::new(format!("Trend: {}", trend_desc)).color(insights.trend.color()).unwrap()
+            ));
+        }
+        
+        // Add submenu to main item
+        item = item.sub(submenu_items);
+        
+        Some(MenuItem::Content(item))
+    }
+    
+    /// Create a system metric item with enhanced sparkline and detailed dropdown submenu
+    fn create_system_metric_with_dropdown<F, G>(
+        &self,
+        name: &str,
+        data: &std::collections::VecDeque<crate::models::TimestampedValue>,
+        chart_fn: F,
+        format_fn: G,
+        history: &AllModelMetricsHistory,
+        metric_type: &str,
+    ) -> Option<MenuItem>
+    where
+        F: Fn(&std::collections::VecDeque<f64>) -> crate::Result<image::DynamicImage>,
+        G: Fn(f64) -> String,
+    {
+        if data.is_empty() {
+            return None;
+        }
+        
+        let values = data.iter().map(|tv| tv.value).collect();
+        let insights = match metric_type {
+            "cpu" => history.get_cpu_insights(),
+            "memory" => history.get_system_memory_insights(),
+            "load" => history.get_load_insights(),
+            _ => return None,
+        };
+        
+        // Build enhanced label with trend arrow and range context
+        let mut label = format!("{}: {}", name, format_fn(insights.current));
+        
+        // Add trend arrow
+        if insights.data_points >= 3 {
+            label.push_str(&format!(" {}", insights.trend.as_arrow()));
+        }
+        
+        // Add time context using actual timestamps
+        let time_text = if data.len() >= 2 {
+            let oldest = data.front().unwrap().timestamp;
+            let newest = data.back().unwrap().timestamp;
+            insights.time_context(oldest, newest)
+        } else if data.len() == 1 {
+            insights.time_context(0, 0) // Will return "(now)"
+        } else {
+            String::new()
+        };
+        
+        if !time_text.is_empty() {
+            label.push_str(&format!(" {}", time_text));
+        }
+        
+        let mut item = ContentItem::new(label);
+        
+        // Apply trend color to the text
+        if insights.data_points >= 3 {
+            item = item.color(insights.trend.color()).unwrap();
+        }
+        
+        // Add enhanced sparkline chart
+        if let Ok(chart) = chart_fn(&values) {
+            if let Ok(chart_image) = icons::icon_to_menu_image(chart) {
+                item = item.image(chart_image).unwrap();
+            }
+        }
+        
+        // Create detailed submenu items
+        let mut submenu_items = vec![];
+        
+        // Current value
+        submenu_items.push(MenuItem::Content(
+            ContentItem::new(format!("Current: {}", format_fn(insights.current)))
+        ));
+        
+        // Range (if we have multiple data points)
+        if insights.data_points > 1 {
+            submenu_items.push(MenuItem::Content(
+                ContentItem::new(format!("Range: {:.1} - {:.1}", insights.min, insights.max))
+            ));
+        }
+        
+        // Trend information
+        if insights.data_points >= 3 {
+            let trend_desc = match insights.trend {
+                crate::models::Trend::Increasing => "▲ Increasing",
+                crate::models::Trend::Decreasing => "▼ Decreasing", 
+                crate::models::Trend::Stable => "▶ Stable",
+                crate::models::Trend::Insufficient => "Insufficient data",
+            };
+            submenu_items.push(MenuItem::Content(
+                ContentItem::new(format!("Trend: {}", trend_desc)).color(insights.trend.color()).unwrap()
+            ));
+        }
+        
+        // Add submenu to main item
+        item = item.sub(submenu_items);
+        
+        Some(MenuItem::Content(item))
+    }
+    
+    /// Add queue status item for a specific model
+    fn add_model_queue_status_item(&mut self, current_metrics: &crate::models::Metrics) {
+        let queue_status = current_metrics.queue_status();
+        
+        let mut queue_item = ContentItem::new(format!("Queue: {}", queue_status));
+        
+        // Color based on queue load
+        let color = if current_metrics.requests_processing > 0 || current_metrics.requests_deferred > 0 {
+            "#FFA500" // Orange for active
+        } else {
+            "#666666" // Gray for idle
+        };
+        queue_item = queue_item.color(color).unwrap();
+        
+        // Create queue details submenu
+        let mut submenu_items = vec![];
+        
+        submenu_items.push(MenuItem::Content(
+            ContentItem::new(format!("Status: {}", queue_status))
+        ));
+        
+        submenu_items.push(MenuItem::Content(
+            ContentItem::new(format!("Processing: {} requests", current_metrics.requests_processing))
+        ));
+        
+        submenu_items.push(MenuItem::Content(
+            ContentItem::new(format!("Deferred: {} requests", current_metrics.requests_deferred))
+        ));
+        
+        submenu_items.push(MenuItem::Content(
+            ContentItem::new(format!("Decode Calls: {}", current_metrics.n_decode_total))
+        ));
+        
+        // Calculate slot utilization if we have decode data
+        if current_metrics.n_decode_total > 0 {
+            let slot_util = "1.0 avg"; // Could calculate from available data
+            submenu_items.push(MenuItem::Content(
+                ContentItem::new(format!("Slot Utilization: {}", slot_util))
+            ));
+        }
+        
+        queue_item = queue_item.sub(submenu_items);
+        self.items.push(MenuItem::Content(queue_item));
     }
     
     fn add_footer_section(&mut self) {
@@ -512,8 +780,10 @@ mod tests {
     
     fn create_test_state(status: ServiceStatus) -> PluginState {
         PluginState {
+            http_client: reqwest::blocking::Client::new(),
             current_status: status,
-            metrics_history: MetricsHistory::new(),
+            metrics_history: AllModelMetricsHistory::new(),
+            current_all_metrics: None,
             error_count: 0,
         }
     }

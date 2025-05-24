@@ -1,5 +1,5 @@
 use reqwest::blocking::Client;
-use crate::models::{Metrics, RunningResponse, RunningModel};
+use crate::models::{Metrics, RunningResponse, RunningModel, AllModelMetrics, ModelMetrics, SystemMetrics};
 use crate::constants;
 use std::time::Duration;
 use std::collections::HashMap;
@@ -93,6 +93,110 @@ fn parse_prometheus_metrics(text: &str) -> HashMap<String, f64> {
     metrics
 }
 
+/// Collect comprehensive system metrics
+fn collect_system_metrics() -> SystemMetrics {
+    use sysinfo::System;
+    
+    let mut system = System::new_all();
+    system.refresh_all();
+    
+    // CPU usage (global CPU usage)
+    system.refresh_cpu_all();
+    std::thread::sleep(std::time::Duration::from_millis(200)); // Allow time for CPU measurement
+    system.refresh_cpu_all();
+    
+    let cpu_usage_percent = system.global_cpu_usage() as f64;
+    
+    // Memory metrics
+    let total_memory_bytes = system.total_memory();
+    let used_memory_bytes = system.used_memory();
+    let available_memory_bytes = system.available_memory();
+    
+    let total_memory_gb = total_memory_bytes as f64 / 1_073_741_824.0; // Convert to GB
+    let used_memory_gb = used_memory_bytes as f64 / 1_073_741_824.0;
+    let available_memory_gb = available_memory_bytes as f64 / 1_073_741_824.0;
+    let memory_usage_percent = if total_memory_bytes > 0 {
+        (used_memory_bytes as f64 / total_memory_bytes as f64) * 100.0
+    } else {
+        0.0
+    };
+    
+    // Load average (1 minute) - use a simplified approach for now
+    let load_average_1m = get_load_average();
+        
+    // GPU metrics removed - powermetrics was too expensive and unreliable
+    
+    SystemMetrics {
+        cpu_usage_percent,
+        total_memory_gb,
+        used_memory_gb,
+        available_memory_gb,
+        memory_usage_percent,
+        gpu_usage_percent: None,
+        gpu_memory_used_gb: None,
+        gpu_memory_total_gb: None,
+        load_average_1m,
+    }
+}
+
+/// Get load average using uptime command (macOS/Unix)
+fn get_load_average() -> Option<f64> {
+    use std::process::Command;
+    
+    Command::new("uptime")
+        .output()
+        .ok()
+        .and_then(|output| {
+            if output.status.success() {
+                let stdout = String::from_utf8(output.stdout).ok()?;
+                // Parse load average from uptime output
+                // Example: "11:15  up 5 days, 10:26, 2 users, load averages: 1.23 1.45 1.67"
+                if let Some(load_part) = stdout.split("load averages:").nth(1) {
+                    let load_values: Vec<&str> = load_part.trim().split_whitespace().collect();
+                    if !load_values.is_empty() {
+                        return load_values[0].parse::<f64>().ok();
+                    }
+                }
+                None
+            } else {
+                None
+            }
+        })
+}
+
+/// Get disk usage using df command (macOS/Unix)
+fn get_disk_usage() -> Option<f64> {
+    use std::process::Command;
+    
+    Command::new("df")
+        .args(&["-h", "/"])
+        .output()
+        .ok()
+        .and_then(|output| {
+            if output.status.success() {
+                let stdout = String::from_utf8(output.stdout).ok()?;
+                // Parse df output
+                // Example: "Filesystem     Size   Used  Avail Capacity  iused      ifree %iused  Mounted on"
+                //          "/dev/disk1s1  233Gi   85Gi  147Gi    37%  1384758 4293582521    0%   /"
+                for line in stdout.lines().skip(1) { // Skip header
+                    if line.contains('/') && !line.starts_with("/dev/disk") {
+                        continue;
+                    }
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() >= 5 {
+                        if let Some(capacity_str) = parts[4].strip_suffix('%') {
+                            return capacity_str.parse::<f64>().ok();
+                        }
+                    }
+                }
+                None
+            } else {
+                None
+            }
+        })
+}
+
+
 /// Get memory usage by running ps command
 fn get_llama_server_memory_mb() -> f64 {
     use std::process::Command;
@@ -163,8 +267,8 @@ fn fetch_model_metrics(client: &Client, model: &RunningModel) -> HashMap<String,
     metrics
 }
 
-/// Fetch metrics from the Llama-Swap API
-pub fn fetch_metrics(client: &Client) -> crate::Result<Metrics> {
+/// Fetch metrics from the Llama-Swap API - returns per-model metrics
+pub fn fetch_all_model_metrics(client: &Client) -> crate::Result<AllModelMetrics> {
     let url = format!("{}:{}/running", constants::API_BASE_URL, constants::API_PORT);
     
     // Make HTTP request
@@ -183,8 +287,47 @@ pub fn fetch_metrics(client: &Client) -> crate::Result<Metrics> {
         .json()
         .map_err(|e| format!("Failed to parse running models JSON: {}", e))?;
     
-    // Get memory usage from sysinfo
-    let memory_mb = get_llama_server_memory_mb();
+    // Get llama-specific memory usage and system metrics
+    let llama_memory_mb = get_llama_server_memory_mb();
+    let system_metrics = collect_system_metrics();
+    
+    // Collect metrics from all running models
+    let mut models = Vec::new();
+    
+    for model in &running_response.running {
+        if model.state == "ready" {
+            let model_metrics_data = fetch_model_metrics(client, model);
+            
+            let mut model_metrics = Metrics {
+                prompt_tokens_per_sec: *model_metrics_data.get("prompt_tokens_per_sec").unwrap_or(&0.0),
+                predicted_tokens_per_sec: *model_metrics_data.get("predicted_tokens_per_sec").unwrap_or(&0.0),
+                requests_processing: *model_metrics_data.get("requests_processing").unwrap_or(&0.0) as u32,
+                requests_deferred: *model_metrics_data.get("requests_deferred").unwrap_or(&0.0) as u32,
+                kv_cache_usage_ratio: *model_metrics_data.get("kv_cache_usage_ratio").unwrap_or(&0.0),
+                kv_cache_tokens: *model_metrics_data.get("kv_cache_tokens").unwrap_or(&0.0) as u32,
+                n_decode_total: *model_metrics_data.get("n_decode_total").unwrap_or(&0.0) as u32,
+                memory_mb: 0.0, // Memory is tracked globally, not per-model
+            };
+            
+            model_metrics.validate()?;
+            
+            models.push(ModelMetrics {
+                model_name: model.model.clone(),
+                metrics: model_metrics,
+            });
+        }
+    }
+    
+    Ok(AllModelMetrics {
+        models,
+        total_llama_memory_mb: llama_memory_mb,
+        system_metrics,
+    })
+}
+
+/// Fetch metrics from the Llama-Swap API - backward compatibility function that aggregates all models
+pub fn fetch_metrics(client: &Client) -> crate::Result<Metrics> {
+    let all_metrics = fetch_all_model_metrics(client)?;
     
     // Aggregate metrics from all running models
     let mut total_prompt_tokens_per_sec = 0.0;
@@ -194,21 +337,17 @@ pub fn fetch_metrics(client: &Client) -> crate::Result<Metrics> {
     let mut total_kv_cache_usage_ratio = 0.0;
     let mut total_kv_cache_tokens = 0u32;
     let mut total_n_decode_total = 0u32;
-    let mut active_models = 0;
+    let active_models = all_metrics.models.len();
     
-    for model in &running_response.running {
-        if model.state == "ready" {
-            let model_metrics = fetch_model_metrics(client, model);
-            
-            total_prompt_tokens_per_sec += model_metrics.get("prompt_tokens_per_sec").unwrap_or(&0.0);
-            total_predicted_tokens_per_sec += model_metrics.get("predicted_tokens_per_sec").unwrap_or(&0.0);
-            total_requests_processing += *model_metrics.get("requests_processing").unwrap_or(&0.0) as u32;
-            total_requests_deferred += *model_metrics.get("requests_deferred").unwrap_or(&0.0) as u32;
-            total_kv_cache_usage_ratio += model_metrics.get("kv_cache_usage_ratio").unwrap_or(&0.0);
-            total_kv_cache_tokens += *model_metrics.get("kv_cache_tokens").unwrap_or(&0.0) as u32;
-            total_n_decode_total += *model_metrics.get("n_decode_total").unwrap_or(&0.0) as u32;
-            active_models += 1;
-        }
+    for model_metrics in &all_metrics.models {
+        let metrics = &model_metrics.metrics;
+        total_prompt_tokens_per_sec += metrics.prompt_tokens_per_sec;
+        total_predicted_tokens_per_sec += metrics.predicted_tokens_per_sec;
+        total_requests_processing += metrics.requests_processing;
+        total_requests_deferred += metrics.requests_deferred;
+        total_kv_cache_usage_ratio += metrics.kv_cache_usage_ratio;
+        total_kv_cache_tokens += metrics.kv_cache_tokens;
+        total_n_decode_total += metrics.n_decode_total;
     }
     
     // Average KV cache usage ratio across models
@@ -218,7 +357,7 @@ pub fn fetch_metrics(client: &Client) -> crate::Result<Metrics> {
         0.0
     };
     
-    // Create metrics
+    // Create aggregated metrics
     let mut metrics = Metrics {
         prompt_tokens_per_sec: total_prompt_tokens_per_sec,
         predicted_tokens_per_sec: total_predicted_tokens_per_sec,
@@ -227,7 +366,7 @@ pub fn fetch_metrics(client: &Client) -> crate::Result<Metrics> {
         kv_cache_usage_ratio: avg_kv_cache_usage_ratio,
         kv_cache_tokens: total_kv_cache_tokens,
         n_decode_total: total_n_decode_total,
-        memory_mb,
+        memory_mb: all_metrics.total_llama_memory_mb,
     };
     
     metrics.validate()?;

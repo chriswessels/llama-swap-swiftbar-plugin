@@ -138,7 +138,7 @@ fn draw_enhanced_line_chart(
     
     // Draw dots for sparse data or small charts
     if data.len() <= 15 {
-        for (i, &(x, y)) in points.iter().enumerate() {
+        for (_i, &(x, y)) in points.iter().enumerate() {
             draw_dot(img, x, y, color);
         }
     }
