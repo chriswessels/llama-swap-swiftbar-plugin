@@ -71,46 +71,6 @@ impl MenuBuilder {
         self.items.push(MenuItem::Content(header));
     }
     
-    fn add_control_section(&mut self, status: ServiceStatus, has_models: bool) {
-        let exe = std::env::current_exe().unwrap();
-        let exe_str = exe.to_str().unwrap();
-        
-        match status {
-            ServiceStatus::Running => {
-                let mut item = ContentItem::new("🔴 Stop Service");
-                item = item.command(attr::Command::try_from((exe_str, "do_stop")).unwrap()).unwrap();
-                self.items.push(MenuItem::Content(item));
-                
-                if has_models {
-                    let mut unload = ContentItem::new("🗑️ Unload Model(s)");
-                    unload = unload.command(attr::Command::try_from((exe_str, "do_unload")).unwrap()).unwrap();
-                    self.items.push(MenuItem::Content(unload));
-                }
-            }
-            ServiceStatus::Stopped | ServiceStatus::Unknown => {
-                let mut item = ContentItem::new("🟢 Start Service");
-                item = item.command(attr::Command::try_from((exe_str, "do_start")).unwrap()).unwrap();
-                self.items.push(MenuItem::Content(item));
-            }
-        }
-        
-        let mut restart = ContentItem::new("⟲ Restart Service");
-        restart = restart.command(attr::Command::try_from((exe_str, "do_restart")).unwrap()).unwrap();
-        self.items.push(MenuItem::Content(restart));
-    }
-    
-    fn add_file_section(&mut self) {
-        let exe = std::env::current_exe().unwrap();
-        let exe_str = exe.to_str().unwrap();
-        
-        let mut view_logs = ContentItem::new("📄 View Logs");
-        view_logs = view_logs.command(attr::Command::try_from((exe_str, "view_logs")).unwrap()).unwrap();
-        self.items.push(MenuItem::Content(view_logs));
-        
-        let mut edit_config = ContentItem::new("⚙️ Edit Configuration");
-        edit_config = edit_config.command(attr::Command::try_from((exe_str, "view_config")).unwrap()).unwrap();
-        self.items.push(MenuItem::Content(edit_config));
-    }
     
     fn add_model_metrics_section(&mut self, model_name: &str, history: &MetricsHistory, current_metrics: &crate::models::Metrics) {
         self.add_header(model_name);
@@ -230,18 +190,58 @@ impl MenuBuilder {
         self.items.push(MenuItem::Content(queue_item));
     }
     
-    fn add_footer_section(&mut self) {
-        let version = env!("CARGO_PKG_VERSION");
-        let mut version_item = ContentItem::new(format!("Llama-Swap Plugin v{}", version));
-        version_item = version_item.color("#666666").unwrap();
-        version_item = version_item.href("https://github.com/your-org/llama-swap-swiftbar").unwrap();
-        self.items.push(MenuItem::Content(version_item));
+    fn add_settings_section(&mut self, status: ServiceStatus, has_models: bool) {
+        let exe = std::env::current_exe().unwrap();
+        let exe_str = exe.to_str().unwrap();
         
+        let mut submenu = Vec::new();
+        
+        // Control actions
+        match status {
+            ServiceStatus::Running => {
+                let mut item = ContentItem::new("🔴 Stop Service");
+                item = item.command(attr::Command::try_from((exe_str, "do_stop")).unwrap()).unwrap();
+                submenu.push(MenuItem::Content(item));
+                
+                if has_models {
+                    let mut unload = ContentItem::new("🗑️ Unload Model(s)");
+                    unload = unload.command(attr::Command::try_from((exe_str, "do_unload")).unwrap()).unwrap();
+                    submenu.push(MenuItem::Content(unload));
+                }
+            }
+            ServiceStatus::Stopped | ServiceStatus::Unknown => {
+                let mut item = ContentItem::new("🟢 Start Service");
+                item = item.command(attr::Command::try_from((exe_str, "do_start")).unwrap()).unwrap();
+                submenu.push(MenuItem::Content(item));
+            }
+        }
+        
+        let mut restart = ContentItem::new("⟲ Restart Service");
+        restart = restart.command(attr::Command::try_from((exe_str, "do_restart")).unwrap()).unwrap();
+        submenu.push(MenuItem::Content(restart));
+        
+        submenu.push(MenuItem::Sep);
+        
+        // File actions
+        let mut view_logs = ContentItem::new("📄 View Logs");
+        view_logs = view_logs.command(attr::Command::try_from((exe_str, "view_logs")).unwrap()).unwrap();
+        submenu.push(MenuItem::Content(view_logs));
+        
+        let mut edit_config = ContentItem::new("⚙️ Edit Model Configuration");
+        edit_config = edit_config.command(attr::Command::try_from((exe_str, "view_config")).unwrap()).unwrap();
+        submenu.push(MenuItem::Content(edit_config));
+        
+        // Debug actions
         if cfg!(debug_assertions) {
+            submenu.push(MenuItem::Sep);
             let mut refresh_item = ContentItem::new("🔄 Force Refresh");
             refresh_item = refresh_item.refresh();
-            self.items.push(MenuItem::Content(refresh_item));
+            submenu.push(MenuItem::Content(refresh_item));
         }
+        
+        let mut settings_item = ContentItem::new("⚙️ Settings");
+        settings_item = settings_item.sub(submenu);
+        self.items.push(MenuItem::Content(settings_item));
     }
     
     fn build(self) -> Menu {
@@ -495,9 +495,6 @@ pub fn build_menu(state: &PluginState) -> crate::Result<String> {
         .as_ref()
         .map(|m| !m.models.is_empty())
         .unwrap_or(false);
-    menu.add_control_section(state.current_status, has_models);
-    menu.add_separator();
-    menu.add_file_section();
     
     if state.current_status == ServiceStatus::Running {
         menu.add_separator();
@@ -516,7 +513,7 @@ pub fn build_menu(state: &PluginState) -> crate::Result<String> {
     }
     
     menu.add_separator();
-    menu.add_footer_section();
+    menu.add_settings_section(state.current_status, has_models);
     
     let built_menu = menu.build();
     Ok(built_menu.to_string())
