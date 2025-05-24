@@ -149,6 +149,7 @@ pub struct MetricsHistory {
     pub prompt_tps: VecDeque<TimestampedValue>, // prompt processing speed
     pub memory_mb: VecDeque<TimestampedValue>,
     pub kv_cache_percent: VecDeque<TimestampedValue>, // KV cache usage percentage
+    pub kv_cache_tokens: VecDeque<TimestampedValue>, // KV cache tokens
     
     #[serde(skip)]
     pub max_size: usize,
@@ -501,6 +502,7 @@ impl MetricsHistory {
             prompt_tps: VecDeque::with_capacity(capacity),
             memory_mb: VecDeque::with_capacity(capacity),
             kv_cache_percent: VecDeque::with_capacity(capacity),
+            kv_cache_tokens: VecDeque::with_capacity(capacity),
             max_size: capacity,
         }
     }
@@ -516,6 +518,7 @@ impl MetricsHistory {
         Self::push_value(&mut self.prompt_tps, metrics.prompt_tokens_per_sec, timestamp, self.max_size);
         Self::push_value(&mut self.memory_mb, metrics.memory_mb, timestamp, self.max_size);
         Self::push_value(&mut self.kv_cache_percent, metrics.kv_cache_percent(), timestamp, self.max_size);
+        Self::push_value(&mut self.kv_cache_tokens, metrics.kv_cache_tokens as f64, timestamp, self.max_size);
         
         // Clean old data
         self.trim_old_data();
@@ -542,6 +545,7 @@ impl MetricsHistory {
         Self::trim_deque(&mut self.prompt_tps, cutoff);
         Self::trim_deque(&mut self.memory_mb, cutoff);
         Self::trim_deque(&mut self.kv_cache_percent, cutoff);
+        Self::trim_deque(&mut self.kv_cache_tokens, cutoff);
     }
     
     fn trim_deque(deque: &mut VecDeque<TimestampedValue>, cutoff: u64) {
@@ -560,6 +564,7 @@ impl MetricsHistory {
         self.prompt_tps.clear();
         self.memory_mb.clear();
         self.kv_cache_percent.clear();
+        self.kv_cache_tokens.clear();
     }
     
     /// Get comprehensive insights for a metric (high-performance, in-memory)

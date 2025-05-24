@@ -176,12 +176,12 @@ impl MenuBuilder {
             self.items.push(item);
         }
         
-        // KV Cache with dropdown details
-        if let Some(item) = self.create_metric_with_dropdown(
+        // KV Cache with enhanced display (tokens and percentage)
+        if let Some(item) = self.create_enhanced_kv_cache_metric_with_dropdown(
             "KV Cache",
             &history.kv_cache_percent,
+            &history.kv_cache_tokens,
             charts::generate_kv_cache_sparkline,
-            |v| format!("{:.0}%", v),
             history,
         ) {
             self.items.push(item);
@@ -211,15 +211,14 @@ impl MenuBuilder {
             }
         }
         
-        // System memory usage (percentage)
-        if !history.memory_usage_percent.is_empty() {
-            if let Some(item) = self.create_system_metric_with_dropdown(
+        // System memory usage (both GB and percentage)
+        if !history.memory_usage_percent.is_empty() && !history.used_memory_gb.is_empty() {
+            if let Some(item) = self.create_enhanced_memory_metric_with_dropdown(
                 "Memory",
                 &history.memory_usage_percent,
+                &history.used_memory_gb,
                 charts::generate_memory_sparkline,
-                |v| format!("{:.1}%", v),
                 history,
-                "memory",
             ) {
                 self.items.push(item);
             }
@@ -280,15 +279,10 @@ impl MenuBuilder {
         let values = data.iter().map(|tv| tv.value).collect();
         let insights = history.get_insights(data);
         
-        // Build enhanced label with trend arrow and range context
-        let mut label = format!("{}: {}", name, format_fn(insights.current));
+        // Build simple label without trend arrow and time context
+        let label = format!("{}: {}", name, format_fn(insights.current));
         
-        // Add trend arrow
-        if insights.data_points >= 3 {
-            label.push_str(&format!(" {}", insights.trend.as_arrow()));
-        }
-        
-        // Add time context using actual timestamps
+        // Store time context for secondary dropdown
         let time_text = if data.len() >= 2 {
             let oldest = data.front().unwrap().timestamp;
             let newest = data.back().unwrap().timestamp;
@@ -299,17 +293,10 @@ impl MenuBuilder {
             String::new()
         };
         
-        if !time_text.is_empty() {
-            label.push_str(&format!(" {}", time_text));
-        }
-        
         
         let mut item = ContentItem::new(label);
         
-        // Apply trend color to the text
-        if insights.data_points >= 3 {
-            item = item.color(insights.trend.color()).unwrap();
-        }
+        // Don't apply trend color to main item since trend moved to dropdown
         
         // Add enhanced sparkline chart
         if let Ok(chart) = chart_fn(&values) {
@@ -352,6 +339,13 @@ impl MenuBuilder {
             ));
         }
         
+        // Dataset duration
+        if !time_text.is_empty() {
+            submenu_items.push(MenuItem::Content(
+                ContentItem::new(format!("Dataset: {}", time_text))
+            ));
+        }
+        
         // Add submenu to main item
         item = item.sub(submenu_items);
         
@@ -378,15 +372,10 @@ impl MenuBuilder {
         let values = data.iter().map(|tv| tv.value).collect();
         let insights = history.get_memory_insights();
         
-        // Build enhanced label with trend arrow and range context
-        let mut label = format!("{}: {}", name, format_fn(insights.current));
+        // Build simple label without trend arrow and time context  
+        let label = format!("{}: {}", name, format_fn(insights.current));
         
-        // Add trend arrow
-        if insights.data_points >= 3 {
-            label.push_str(&format!(" {}", insights.trend.as_arrow()));
-        }
-        
-        // Add time context using actual timestamps
+        // Store time context for secondary dropdown
         let time_text = if data.len() >= 2 {
             let oldest = data.front().unwrap().timestamp;
             let newest = data.back().unwrap().timestamp;
@@ -397,17 +386,9 @@ impl MenuBuilder {
             String::new()
         };
         
-        if !time_text.is_empty() {
-            label.push_str(&format!(" {}", time_text));
-        }
-        
-        
         let mut item = ContentItem::new(label);
         
-        // Apply trend color to the text
-        if insights.data_points >= 3 {
-            item = item.color(insights.trend.color()).unwrap();
-        }
+        // Don't apply trend color to main item since trend moved to dropdown
         
         // Add enhanced sparkline chart
         if let Ok(chart) = chart_fn(&values) {
@@ -450,6 +431,13 @@ impl MenuBuilder {
             ));
         }
         
+        // Dataset duration
+        if !time_text.is_empty() {
+            submenu_items.push(MenuItem::Content(
+                ContentItem::new(format!("Dataset: {}", time_text))
+            ));
+        }
+        
         // Add submenu to main item
         item = item.sub(submenu_items);
         
@@ -482,15 +470,10 @@ impl MenuBuilder {
             _ => return None,
         };
         
-        // Build enhanced label with trend arrow and range context
-        let mut label = format!("{}: {}", name, format_fn(insights.current));
+        // Build simple label without trend arrow and time context
+        let label = format!("{}: {}", name, format_fn(insights.current));
         
-        // Add trend arrow
-        if insights.data_points >= 3 {
-            label.push_str(&format!(" {}", insights.trend.as_arrow()));
-        }
-        
-        // Add time context using actual timestamps
+        // Store time context for secondary dropdown
         let time_text = if data.len() >= 2 {
             let oldest = data.front().unwrap().timestamp;
             let newest = data.back().unwrap().timestamp;
@@ -501,17 +484,9 @@ impl MenuBuilder {
             String::new()
         };
         
-        if !time_text.is_empty() {
-            label.push_str(&format!(" {}", time_text));
-        }
-        
-        
         let mut item = ContentItem::new(label);
         
-        // Apply trend color to the text
-        if insights.data_points >= 3 {
-            item = item.color(insights.trend.color()).unwrap();
-        }
+        // Don't apply trend color to main item since trend moved to dropdown
         
         // Add enhanced sparkline chart
         if let Ok(chart) = chart_fn(&values) {
@@ -545,6 +520,211 @@ impl MenuBuilder {
             };
             submenu_items.push(MenuItem::Content(
                 ContentItem::new(format!("Trend: {}", trend_desc)).color(insights.trend.color()).unwrap()
+            ));
+        }
+        
+        // Dataset duration
+        if !time_text.is_empty() {
+            submenu_items.push(MenuItem::Content(
+                ContentItem::new(format!("Dataset: {}", time_text))
+            ));
+        }
+        
+        // Add submenu to main item
+        item = item.sub(submenu_items);
+        
+        Some(MenuItem::Content(item))
+    }
+    
+    /// Create an enhanced memory metric item that shows both nominal GB and percentage
+    fn create_enhanced_memory_metric_with_dropdown<F>(
+        &self,
+        name: &str,
+        percent_data: &std::collections::VecDeque<crate::models::TimestampedValue>,
+        gb_data: &std::collections::VecDeque<crate::models::TimestampedValue>,
+        chart_fn: F,
+        history: &AllModelMetricsHistory,
+    ) -> Option<MenuItem>
+    where
+        F: Fn(&std::collections::VecDeque<f64>) -> crate::Result<image::DynamicImage>,
+    {
+        if percent_data.is_empty() || gb_data.is_empty() {
+            return None;
+        }
+        
+        let percent_values = percent_data.iter().map(|tv| tv.value).collect();
+        let percent_insights = history.get_system_memory_insights();
+        let gb_current = gb_data.back().unwrap().value;
+        
+        // Build label with both GB and percentage
+        let label = format!("{}: {:.1} GB ({:.1}%)", name, gb_current, percent_insights.current);
+        
+        // Store time context for secondary dropdown
+        let time_text = if percent_data.len() >= 2 {
+            let oldest = percent_data.front().unwrap().timestamp;
+            let newest = percent_data.back().unwrap().timestamp;
+            percent_insights.time_context(oldest, newest)
+        } else if percent_data.len() == 1 {
+            percent_insights.time_context(0, 0) // Will return "(now)"
+        } else {
+            String::new()
+        };
+        
+        let mut item = ContentItem::new(label);
+        
+        // Don't apply trend color to main item since trend moved to dropdown
+        
+        // Add enhanced sparkline chart based on percentage
+        if let Ok(chart) = chart_fn(&percent_values) {
+            if let Ok(chart_image) = icons::icon_to_menu_image(chart) {
+                item = item.image(chart_image).unwrap();
+            }
+        }
+        
+        // Create detailed submenu items
+        let mut submenu_items = vec![];
+        
+        // Current values (both GB and percentage)
+        submenu_items.push(MenuItem::Content(
+            ContentItem::new(format!("Current: {:.1} GB ({:.1}%)", gb_current, percent_insights.current))
+        ));
+        
+        // Range for percentage (if we have multiple data points)
+        if percent_insights.data_points > 1 {
+            submenu_items.push(MenuItem::Content(
+                ContentItem::new(format!("Range: {:.1}% - {:.1}%", percent_insights.min, percent_insights.max))
+            ));
+        }
+        
+        // Range for GB values
+        if gb_data.len() > 1 {
+            let gb_values: Vec<f64> = gb_data.iter().map(|tv| tv.value).collect();
+            let gb_min = gb_values.iter().fold(f64::INFINITY, |a, &b| a.min(b));
+            let gb_max = gb_values.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+            submenu_items.push(MenuItem::Content(
+                ContentItem::new(format!("GB Range: {:.1} - {:.1}", gb_min, gb_max))
+            ));
+        }
+        
+        // Trend information
+        if percent_insights.data_points >= 3 {
+            let trend_desc = match percent_insights.trend {
+                crate::models::Trend::Increasing => "▲ Increasing",
+                crate::models::Trend::Decreasing => "▼ Decreasing", 
+                crate::models::Trend::Stable => "▶ Stable",
+                crate::models::Trend::Insufficient => "Insufficient data",
+            };
+            submenu_items.push(MenuItem::Content(
+                ContentItem::new(format!("Trend: {}", trend_desc)).color(percent_insights.trend.color()).unwrap()
+            ));
+        }
+        
+        // Dataset duration
+        if !time_text.is_empty() {
+            submenu_items.push(MenuItem::Content(
+                ContentItem::new(format!("Dataset: {}", time_text))
+            ));
+        }
+        
+        // Add submenu to main item
+        item = item.sub(submenu_items);
+        
+        Some(MenuItem::Content(item))
+    }
+    
+    /// Create an enhanced KV cache metric item that shows both nominal tokens and percentage
+    fn create_enhanced_kv_cache_metric_with_dropdown<F>(
+        &self,
+        name: &str,
+        percent_data: &std::collections::VecDeque<crate::models::TimestampedValue>,
+        tokens_data: &std::collections::VecDeque<crate::models::TimestampedValue>,
+        chart_fn: F,
+        history: &crate::models::MetricsHistory,
+    ) -> Option<MenuItem>
+    where
+        F: Fn(&std::collections::VecDeque<f64>) -> crate::Result<image::DynamicImage>,
+    {
+        if percent_data.is_empty() || tokens_data.is_empty() {
+            return None;
+        }
+        
+        let percent_values = percent_data.iter().map(|tv| tv.value).collect();
+        let percent_insights = history.get_insights(percent_data);
+        let tokens_current = tokens_data.back().unwrap().value as u32;
+        
+        // Build label with both tokens and percentage
+        let label = format!("{}: {} tokens ({:.0}%)", name, tokens_current, percent_insights.current);
+        
+        // Store time context for secondary dropdown
+        let time_text = if percent_data.len() >= 2 {
+            let oldest = percent_data.front().unwrap().timestamp;
+            let newest = percent_data.back().unwrap().timestamp;
+            percent_insights.time_context(oldest, newest)
+        } else if percent_data.len() == 1 {
+            percent_insights.time_context(0, 0) // Will return "(now)"
+        } else {
+            String::new()
+        };
+        
+        let mut item = ContentItem::new(label);
+        
+        // Don't apply trend color to main item since trend moved to dropdown
+        
+        // Add enhanced sparkline chart based on percentage
+        if let Ok(chart) = chart_fn(&percent_values) {
+            if let Ok(chart_image) = icons::icon_to_menu_image(chart) {
+                item = item.image(chart_image).unwrap();
+            }
+        }
+        
+        // Create detailed submenu items
+        let mut submenu_items = vec![];
+        
+        // Current values (both tokens and percentage)
+        submenu_items.push(MenuItem::Content(
+            ContentItem::new(format!("Current: {} tokens ({:.0}%)", tokens_current, percent_insights.current))
+        ));
+        
+        // Range for percentage (if we have multiple data points)
+        if percent_insights.data_points > 1 {
+            submenu_items.push(MenuItem::Content(
+                ContentItem::new(format!("Range: {:.0}% - {:.0}%", percent_insights.min, percent_insights.max))
+            ));
+        }
+        
+        // Range for token values
+        if tokens_data.len() > 1 {
+            let token_values: Vec<f64> = tokens_data.iter().map(|tv| tv.value).collect();
+            let tokens_min = token_values.iter().fold(f64::INFINITY, |a, &b| a.min(b)) as u32;
+            let tokens_max = token_values.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b)) as u32;
+            submenu_items.push(MenuItem::Content(
+                ContentItem::new(format!("Token Range: {} - {}", tokens_min, tokens_max))
+            ));
+            
+            // Calculate and show average tokens
+            let stats = history.calculate_stats(tokens_data);
+            submenu_items.push(MenuItem::Content(
+                ContentItem::new(format!("Avg Tokens: {:.0}", stats.mean))
+            ));
+        }
+        
+        // Trend information
+        if percent_insights.data_points >= 3 {
+            let trend_desc = match percent_insights.trend {
+                crate::models::Trend::Increasing => "▲ Increasing",
+                crate::models::Trend::Decreasing => "▼ Decreasing", 
+                crate::models::Trend::Stable => "▶ Stable",
+                crate::models::Trend::Insufficient => "Insufficient data",
+            };
+            submenu_items.push(MenuItem::Content(
+                ContentItem::new(format!("Trend: {}", trend_desc)).color(percent_insights.trend.color()).unwrap()
+            ));
+        }
+        
+        // Dataset duration
+        if !time_text.is_empty() {
+            submenu_items.push(MenuItem::Content(
+                ContentItem::new(format!("Dataset: {}", time_text))
             ));
         }
         
