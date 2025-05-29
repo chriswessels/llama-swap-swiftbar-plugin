@@ -32,21 +32,13 @@ impl MenuBuilder {
     }
     
     fn add_title(&mut self, status: ServiceStatus) {
-        match icons::generate_status_icon(status) {
-            Ok(icon) => {
-                match icons::icon_to_menu_image(icon) {
-                    Ok(menu_image) => {
-                        let item = ContentItem::new("").image(menu_image).unwrap();
-                        self.items.push(MenuItem::Content(item));
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to convert icon: {}", e);
-                        self.add_text_title(status);
-                    }
-                }
+        match icons::get_status_icon_png(status) {
+            Ok(menu_image) => {
+                let item = ContentItem::new("").image(menu_image).unwrap();
+                self.items.push(MenuItem::Content(item));
             }
             Err(e) => {
-                eprintln!("Failed to generate icon: {}", e);
+                eprintln!("Failed to generate status icon: {}", e);
                 self.add_text_title(status);
             }
         }
@@ -274,7 +266,7 @@ fn build_label(
 fn add_chart(item: &mut ContentItem, data: &VecDeque<TimestampedValue>, chart_type: charts::MetricType) {
     let values = data.iter().map(|tv| tv.value).collect();
     if let Ok(chart) = charts::generate_sparkline(&values, chart_type) {
-        if let Ok(chart_image) = icons::icon_to_menu_image(chart) {
+        if let Ok(chart_image) = icons::chart_to_menu_image(chart) {
             // We need to replace the item content, not clone it
             let text = item.text.clone();
             *item = ContentItem::new(text).image(chart_image).unwrap();
