@@ -40,10 +40,6 @@ pub struct SystemMetrics {
     pub used_memory_gb: f64,
     pub available_memory_gb: f64,
     pub memory_usage_percent: f64,
-    pub gpu_usage_percent: Option<f64>,
-    pub gpu_memory_used_gb: Option<f64>,
-    pub gpu_memory_total_gb: Option<f64>,
-    pub load_average_1m: Option<f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -417,9 +413,6 @@ pub struct AllModelMetricsHistory {
     pub cpu_usage_percent: VecDeque<TimestampedValue>,
     pub memory_usage_percent: VecDeque<TimestampedValue>,
     pub used_memory_gb: VecDeque<TimestampedValue>,
-    pub gpu_usage_percent: VecDeque<TimestampedValue>,
-    pub gpu_memory_used_gb: VecDeque<TimestampedValue>,
-    pub load_average_1m: VecDeque<TimestampedValue>,
     
     #[serde(skip)]
     pub max_size: usize,
@@ -443,9 +436,6 @@ impl AllModelMetricsHistory {
             cpu_usage_percent: VecDeque::with_capacity(capacity),
             memory_usage_percent: VecDeque::with_capacity(capacity),
             used_memory_gb: VecDeque::with_capacity(capacity),
-            gpu_usage_percent: VecDeque::with_capacity(capacity),
-            gpu_memory_used_gb: VecDeque::with_capacity(capacity),
-            load_average_1m: VecDeque::with_capacity(capacity),
             max_size: capacity,
         }
     }
@@ -459,7 +449,6 @@ impl AllModelMetricsHistory {
         DataAnalyzer::push_value_to_deque(&mut self.cpu_usage_percent, sys.cpu_usage_percent, timestamp, self.max_size);
         DataAnalyzer::push_value_to_deque(&mut self.memory_usage_percent, sys.memory_usage_percent, timestamp, self.max_size);
         DataAnalyzer::push_value_to_deque(&mut self.used_memory_gb, sys.used_memory_gb, timestamp, self.max_size);
-        DataAnalyzer::push_value_to_deque(&mut self.load_average_1m, sys.load_average_1m.unwrap_or(0.0), timestamp, self.max_size);
         
         for model_metrics in &all_metrics.models {
             let history = self.models.entry(model_metrics.model_name.clone())
@@ -477,9 +466,6 @@ impl AllModelMetricsHistory {
         DataAnalyzer::trim_deque(&mut self.cpu_usage_percent, cutoff);
         DataAnalyzer::trim_deque(&mut self.memory_usage_percent, cutoff);
         DataAnalyzer::trim_deque(&mut self.used_memory_gb, cutoff);
-        DataAnalyzer::trim_deque(&mut self.gpu_usage_percent, cutoff);
-        DataAnalyzer::trim_deque(&mut self.gpu_memory_used_gb, cutoff);
-        DataAnalyzer::trim_deque(&mut self.load_average_1m, cutoff);
         
         for (_, history) in self.models.iter_mut() {
             history.trim_old_data();
@@ -494,9 +480,6 @@ impl AllModelMetricsHistory {
         self.cpu_usage_percent.clear();
         self.memory_usage_percent.clear();
         self.used_memory_gb.clear();
-        self.gpu_usage_percent.clear();
-        self.gpu_memory_used_gb.clear();
-        self.load_average_1m.clear();
     }
     
     pub fn get_model_history(&self, model_name: &str) -> Option<&MetricsHistory> {
@@ -514,10 +497,6 @@ impl AllModelMetricsHistory {
     
     pub fn get_system_memory_insights(&self) -> MetricInsights {
         DataAnalyzer::get_insights(&self.memory_usage_percent)
-    }
-    
-    pub fn get_load_insights(&self) -> MetricInsights {
-        DataAnalyzer::get_insights(&self.load_average_1m)
     }
     
     pub fn get_memory_insights(&self) -> MetricInsights {

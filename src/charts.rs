@@ -110,12 +110,6 @@ fn draw_line_chart(
     for window in points.windows(2) {
         draw_line(img, window[0], window[1], color);
     }
-    
-    if data.len() <= 15 {
-        for &(x, y) in &points {
-            draw_dot(img, x, y, color);
-        }
-    }
 }
 
 /// Draw a line between two points using Bresenham's algorithm
@@ -155,24 +149,6 @@ fn draw_line(
         }
     }
 }
-
-/// Draw a small dot for data points
-fn draw_dot(img: &mut RgbaImage, cx: u32, cy: u32, color: (u8, u8, u8)) {
-    const RADIUS: u32 = 1;
-    let (width, height) = img.dimensions();
-    let rgba = Rgba([color.0, color.1, color.2, 255]);
-    
-    for y in cy.saturating_sub(RADIUS)..=(cy + RADIUS).min(height - 1) {
-        for x in cx.saturating_sub(RADIUS)..=(cx + RADIUS).min(width - 1) {
-            let dx = x as i32 - cx as i32;
-            let dy = y as i32 - cy as i32;
-            if dx * dx + dy * dy <= RADIUS as i32 * RADIUS as i32 {
-                img.put_pixel(x, y, rgba);
-            }
-        }
-    }
-}
-
 
 
 #[cfg(test)]

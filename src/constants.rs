@@ -33,5 +33,5 @@ pub const COLOR_MEM_LINE: (u8, u8, u8) = (0, 191, 255);    // Deep sky blue - Me
 pub const COLOR_KV_CACHE_LINE: (u8, u8, u8) = (147, 112, 219); // Medium slate blue - KV cache
 
 // Icon configuration
-pub const STATUS_DOT_SIZE: u32 = 6;
-pub const STATUS_DOT_OFFSET: u32 = 2; // From bottom-right corner
+pub const STATUS_DOT_SIZE: u32 = 8;
+pub const STATUS_DOT_OFFSET: u32 = 3; // From bottom-right corner

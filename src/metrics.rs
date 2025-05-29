@@ -92,40 +92,14 @@ fn collect_system_metrics() -> SystemMetrics {
     let used_memory_gb = bytes_to_gb(used_memory_bytes);
     let available_memory_gb = bytes_to_gb(available_memory_bytes);
     let memory_usage_percent = percentage(used_memory_bytes, total_memory_bytes);
-    
-    let load_average_1m = get_load_average();
-    
+        
     SystemMetrics {
         cpu_usage_percent,
         total_memory_gb,
         used_memory_gb,
         available_memory_gb,
         memory_usage_percent,
-        gpu_usage_percent: None,
-        gpu_memory_used_gb: None,
-        gpu_memory_total_gb: None,
-        load_average_1m,
     }
-}
-
-fn get_load_average() -> Option<f64> {
-    use std::process::Command;
-    
-    Command::new("uptime")
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .and_then(|output| String::from_utf8(output.stdout).ok())
-        .and_then(|stdout| {
-            stdout
-                .split("load averages:")
-                .nth(1)?
-                .trim()
-                .split_whitespace()
-                .next()?
-                .parse::<f64>()
-                .ok()
-        })
 }
 
 fn get_llama_server_memory_mb() -> f64 {
@@ -137,7 +111,7 @@ fn get_llama_server_memory_mb() -> f64 {
         .values()
         .filter(|process| {
             let name = process.name().to_string_lossy();
-            name.contains("llama-server") || name.contains("llama_server")
+            name.starts_with("llama-")
         })
         .map(|process| process.memory())
         .sum::<u64>();

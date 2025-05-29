@@ -26,6 +26,7 @@ serde_json = "1.0"
 
 # Image processing for charts and icons
 image = "0.24"
+png = "0.17"
 
 # Signal handling for graceful shutdown
 ctrlc = "3.4"

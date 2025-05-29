@@ -27,12 +27,3 @@ fn check_via_launchctl() -> bool {
         })
         .unwrap_or(false)
 }
-
-/// Alternative: Check if process is running via pgrep (if needed later)
-#[allow(dead_code)]
-fn check_via_pgrep() -> bool {
-    Command::new("pgrep")
-        .args(&["-f", "llama-swap"])
-        .output()
-        .map_or(false, |result| result.status.success())
-}

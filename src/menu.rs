@@ -110,12 +110,6 @@ impl MenuBuilder {
                 self.items.push(item);
             }
         }
-        
-        if !history.load_average_1m.is_empty() {
-            if let Some(item) = self.create_system_metric("Load Avg", &history.load_average_1m, None, charts::MetricType::Prompt, format_load, MetricDisplayType::Simple, history) {
-                self.items.push(item);
-            }
-        }
     }
     
     fn create_metric(
@@ -292,7 +286,6 @@ fn get_system_insights(metric_name: &str, history: &AllModelMetricsHistory) -> c
     match metric_name {
         "CPU" => history.get_cpu_insights(),
         "Memory" => history.get_system_memory_insights(),
-        "Load Avg" => history.get_load_insights(),
         "Llama Memory" => history.get_memory_insights(),
         _ => unreachable!(),
     }
@@ -449,11 +442,6 @@ fn format_tps(v: f64) -> String {
 fn format_percent(v: f64) -> String {
     format!("{:.1}%", v)
 }
-
-fn format_load(v: f64) -> String {
-    format!("{:.2}", v)
-}
-
 
 fn calculate_stats_for_data(data: &VecDeque<TimestampedValue>) -> crate::models::MetricStats {
     let values: Vec<f64> = data.iter().map(|tv| tv.value).collect();
