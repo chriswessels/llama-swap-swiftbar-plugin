@@ -1,5 +1,5 @@
 use reqwest::blocking::Client;
-use crate::models::{Metrics, RunningResponse, RunningModel, AllModelMetrics, ModelMetrics, SystemMetrics};
+use crate::models::{Metrics, RunningResponse, RunningModel, AllMetrics, ModelMetrics, SystemMetrics};
 use crate::constants;
 use std::time::Duration;
 use std::collections::HashMap;
@@ -111,7 +111,7 @@ fn get_llama_server_memory_mb() -> f64 {
         .values()
         .filter(|process| {
             let name = process.name().to_string_lossy();
-            name.starts_with("llama-")
+            name.contains("llama-server") || name.contains("llama_server") || name.contains("llama-swap")
         })
         .map(|process| process.memory())
         .sum::<u64>();
@@ -139,7 +139,7 @@ fn fetch_model_metrics(client: &Client, model: &RunningModel) -> HashMap<String,
 }
 
 fn create_metrics_from_data(data: &HashMap<String, f64>) -> crate::Result<Metrics> {
-    let mut metrics = Metrics {
+    let metrics = Metrics {
         prompt_tokens_per_sec: get_metric_value(data, "prompt_tokens_per_sec"),
         predicted_tokens_per_sec: get_metric_value(data, "predicted_tokens_per_sec"),
         requests_processing: get_metric_value(data, "requests_processing") as u32,
@@ -150,11 +150,10 @@ fn create_metrics_from_data(data: &HashMap<String, f64>) -> crate::Result<Metric
         memory_mb: 0.0,
     };
     
-    metrics.validate()?;
     Ok(metrics)
 }
 
-pub fn fetch_all_model_metrics(client: &Client) -> crate::Result<AllModelMetrics> {
+pub fn fetch_all_metrics(client: &Client) -> crate::Result<AllMetrics> {
     let url = format!("{}:{}/running", constants::API_BASE_URL, constants::API_PORT);
     
     let response = client
@@ -188,7 +187,7 @@ pub fn fetch_all_model_metrics(client: &Client) -> crate::Result<AllModelMetrics
         })
         .collect();
     
-    Ok(AllModelMetrics {
+    Ok(AllMetrics {
         models,
         total_llama_memory_mb: llama_memory_mb,
         system_metrics,

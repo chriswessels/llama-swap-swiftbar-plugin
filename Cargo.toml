@@ -33,6 +33,7 @@ ctrlc = "3.4"
 
 # System information for memory usage
 sysinfo = { version = "0.31", default-features = false, features = ["system", "apple-app-store"] }
+base64 = "0.22.1"
 
 [profile.release]
 opt-level = "z"     # Optimize for size

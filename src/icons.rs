@@ -5,67 +5,89 @@ use std::sync::OnceLock;
 use crate::models::ServiceStatus;
 use crate::constants::{COLOR_RUNNING, COLOR_STOPPED, STATUS_DOT_SIZE, STATUS_DOT_OFFSET};
 
-pub const BASE_ICON_BYTES: &[u8] =
-    include_bytes!("../assets/llama-48.png");        // keep the @2x suffix
+use base64::{engine::general_purpose::STANDARD as B64, Engine};
+
+pub const DARK_BASE_ICON_BYTES: &[u8] =
+    include_bytes!("../assets/llama-48-white.png");
+
+pub const LIGHT_BASE_ICON_BYTES: &[u8] =
+    include_bytes!("../assets/llama-48.png");
 
 /// 1 inch / 0.0254 m × 144 dpi  ≈ 5 669 px per metre
 const RETINA_PPM: u32 = 5_669;
 
-/// Cached pre-encoded PNG data for maximum performance
+/// Cached status icon images for maximum performance
 struct IconCache {
-    running_png: Vec<u8>,
-    stopped_png: Vec<u8>,
-    unknown_png: Vec<u8>,
+    running: bitbar::attr::Image,
+    stopped: bitbar::attr::Image,
+    unknown: bitbar::attr::Image,
 }
 
 static ICON_CACHE: OnceLock<IconCache> = OnceLock::new();
 
 /// Initialize the icon cache (called once at startup)
 fn init_icon_cache() -> IconCache {
-    // Load and decode the base icon once
-    let base_icon = image::load_from_memory(BASE_ICON_BYTES)
-        .expect("Failed to load base icon");
-    let base_rgba = base_icon.to_rgba8();
+    // Load and decode the base icons once
+    let base_icon_dark = image::load_from_memory(DARK_BASE_ICON_BYTES)
+        .expect("Failed to load dark base icon");
+    let base_rgba_dark = base_icon_dark.to_rgba8();
     
-    // Pre-compute and encode all status variants
-    let running_png = create_and_encode_status_icon(&base_rgba, COLOR_RUNNING)
-        .expect("Failed to encode running icon");
-    let stopped_png = create_and_encode_status_icon(&base_rgba, COLOR_STOPPED)
-        .expect("Failed to encode stopped icon");
-    let unknown_png = create_and_encode_status_icon(&base_rgba, (128, 128, 128))
-        .expect("Failed to encode unknown icon");
+    let base_icon_light = image::load_from_memory(LIGHT_BASE_ICON_BYTES)
+        .expect("Failed to load light base icon");
+    let base_rgba_light = base_icon_light.to_rgba8();
+    
+    // Create themed images for each status
+    let running_image = create_themed_status_icon(&base_rgba_light, &base_rgba_dark, COLOR_RUNNING)
+        .expect("Failed to create running icon");
+    let stopped_image = create_themed_status_icon(&base_rgba_light, &base_rgba_dark, COLOR_STOPPED)
+        .expect("Failed to create stopped icon");
+    let unknown_image = create_themed_status_icon(&base_rgba_light, &base_rgba_dark, (128, 128, 128))
+        .expect("Failed to create unknown icon");
     
     IconCache {
-        running_png,
-        stopped_png,
-        unknown_png,
+        running: running_image,
+        stopped: stopped_image,
+        unknown: unknown_image,
     }
 }
 
-/// Create a status icon with dot and encode directly to PNG
-fn create_and_encode_status_icon(base: &RgbaImage, color: (u8, u8, u8)) -> crate::Result<Vec<u8>> {
-    let mut icon = base.clone();
-    draw_status_dot(&mut icon, color);
-    encode_rgba_to_png(&icon)
+/// Create a themed status icon (light,dark format) with status dot
+fn create_themed_status_icon(light_base: &RgbaImage, dark_base: &RgbaImage, color: (u8, u8, u8)) -> crate::Result<bitbar::attr::Image> {
+    // Create light version
+    let mut light_icon = light_base.clone();
+    draw_status_dot(&mut light_icon, color);
+    let light_png = encode_rgba_to_png(&light_icon)?;
+    
+    // Create dark version
+    let mut dark_icon = dark_base.clone();
+    draw_status_dot(&mut dark_icon, color);
+    let dark_png = encode_rgba_to_png(&dark_icon)?;
+    
+    // ── turn the raw bytes into text ─────────────────────────────
+    let light_b64 = B64.encode(&light_png);  // String
+    let dark_b64  = B64.encode(&dark_png);   // String
+
+    // one comma → SwiftBar shows first in Light Mode, second in Dark Mode
+    let themed_image_data = format!("{light_b64},{dark_b64}");
+    Ok(bitbar::attr::Image::from(themed_image_data))
 }
 
-/// Ultra-fast status icon generation - returns pre-encoded PNG data
-pub fn get_status_icon_png(status: ServiceStatus) -> crate::Result<bitbar::attr::Image> {
+/// Get cached status icon image
+pub fn get_status_icon(status: ServiceStatus) -> &'static bitbar::attr::Image {
     let cache = ICON_CACHE.get_or_init(init_icon_cache);
     
-    let png_data = match status {
-        ServiceStatus::Running => &cache.running_png,
-        ServiceStatus::Stopped => &cache.stopped_png,
-        ServiceStatus::Unknown => &cache.unknown_png,
-    };
-    
-    Ok(bitbar::attr::Image::from(png_data.clone()))
+    match status {
+        ServiceStatus::Running => &cache.running,
+        ServiceStatus::Stopped => &cache.stopped,
+        ServiceStatus::Unknown => &cache.unknown,
+    }
 }
 
 /// Convert chart image to menu image (for charts only)
 pub fn chart_to_menu_image(chart: DynamicImage) -> crate::Result<bitbar::attr::Image> {
     let buffer = encode_rgba_to_png(&chart.to_rgba8())?;
-    Ok(bitbar::attr::Image::from(buffer))
+    let b64_data = B64.encode(&buffer);
+    Ok(bitbar::attr::Image::from(b64_data))
 }
 
 /// Encode RGBA image to PNG with retina metadata

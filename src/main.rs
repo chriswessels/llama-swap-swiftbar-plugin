@@ -7,7 +7,7 @@ mod icons;
 mod commands;
 mod service;
 
-use crate::models::{AllModelMetricsHistory, ServiceStatus, AllModelMetrics};
+use crate::models::{AllMetricsHistory, ServiceStatus, AllMetrics};
 use reqwest::blocking::Client;
 use std::error::Error;
 use std::io::{self, Write};
@@ -45,9 +45,9 @@ impl PollingMode {
 
 pub struct PluginState {
     pub http_client: Client,
-    pub metrics_history: AllModelMetricsHistory,
+    pub metrics_history: AllMetricsHistory,
     pub current_status: ServiceStatus,
-    pub current_all_metrics: Option<AllModelMetrics>,
+    pub current_all_metrics: Option<AllMetrics>,
     pub error_count: usize,
     pub polling_mode: PollingMode,
     pub last_status: ServiceStatus,
@@ -62,7 +62,7 @@ impl PluginState {
 
         Ok(Self {
             http_client,
-            metrics_history: AllModelMetricsHistory::new(),
+            metrics_history: AllMetricsHistory::new(),
             current_status: ServiceStatus::Unknown,
             current_all_metrics: None,
             error_count: 0,
@@ -147,7 +147,7 @@ impl PluginState {
     fn update_state(&mut self) {
         self.last_status = self.current_status;
         
-        match metrics::fetch_all_model_metrics(&self.http_client) {
+        match metrics::fetch_all_metrics(&self.http_client) {
             Ok(all_metrics) => self.handle_metrics_success(all_metrics),
             Err(e) => self.handle_metrics_error(e),
         }
@@ -155,7 +155,7 @@ impl PluginState {
         self.update_polling_mode();
     }
     
-    fn handle_metrics_success(&mut self, all_metrics: AllModelMetrics) {
+    fn handle_metrics_success(&mut self, all_metrics: AllMetrics) {
         self.current_status = ServiceStatus::Running;
         self.metrics_history.push(&all_metrics);
         self.current_all_metrics = Some(all_metrics);

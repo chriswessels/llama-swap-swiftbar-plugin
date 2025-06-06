@@ -43,7 +43,7 @@ pub struct SystemMetrics {
 }
 
 #[derive(Debug, Clone)]
-pub struct AllModelMetrics {
+pub struct AllMetrics {
     pub models: Vec<ModelMetrics>,
     pub total_llama_memory_mb: f64,
     pub system_metrics: SystemMetrics,
@@ -61,20 +61,7 @@ pub struct Metrics {
     pub memory_mb: f64,
 }
 
-impl Metrics {
-    pub fn validate(&mut self) -> crate::Result<()> {
-        self.prompt_tokens_per_sec = self.prompt_tokens_per_sec.clamp(0.0, 10000.0);
-        self.predicted_tokens_per_sec = self.predicted_tokens_per_sec.clamp(0.0, 1000.0);
-        self.kv_cache_usage_ratio = self.kv_cache_usage_ratio.clamp(0.0, 1.0);
-        self.memory_mb = self.memory_mb.clamp(0.0, 1_000_000.0);
-        
-        if self.prompt_tokens_per_sec == 10000.0 || self.predicted_tokens_per_sec == 1000.0 || self.memory_mb == 1_000_000.0 {
-            return Err("Metric value unreasonably high".into());
-        }
-        
-        Ok(())
-    }
-    
+impl Metrics {    
     pub fn kv_cache_percent(&self) -> f64 {
         self.kv_cache_usage_ratio * 100.0
     }
@@ -112,40 +99,11 @@ pub struct TimestampedValue {
     pub value: f64,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum Trend {
-    Increasing,
-    Decreasing,
-    Stable,
-    Insufficient,
-}
-
-impl Trend {
-    pub fn as_arrow(&self) -> &'static str {
-        match self {
-            Trend::Increasing => "▲",
-            Trend::Decreasing => "▼",
-            Trend::Stable => "▶",
-            Trend::Insufficient => "",
-        }
-    }
-    
-    pub fn color(&self) -> &'static str {
-        match self {
-            Trend::Increasing => "#00C853",
-            Trend::Decreasing => "#FF1744",
-            Trend::Stable => "#666666",
-            Trend::Insufficient => "#666666",
-        }
-    }
-}
-
 #[derive(Debug)]
 pub struct MetricInsights {
     pub current: f64,
     pub min: f64,
     pub max: f64,
-    pub trend: Trend,
     pub data_points: usize,
 }
 
@@ -189,7 +147,6 @@ impl DataAnalyzer {
                 current: 0.0,
                 min: 0.0,
                 max: 0.0,
-                trend: Trend::Insufficient,
                 data_points: 0,
             };
         }
@@ -204,13 +161,10 @@ impl DataAnalyzer {
             )
         };
         
-        let trend = Self::calculate_trend(data);
-        
         MetricInsights {
             current,
             min,
             max,
-            trend,
             data_points,
         }
     }
@@ -241,74 +195,7 @@ impl DataAnalyzer {
             count: values.len(),
         }
     }
-    
-    fn calculate_trend(data: &VecDeque<TimestampedValue>) -> Trend {
-        let len = data.len();
-        if len < 3 {
-            return Trend::Insufficient;
-        }
         
-        let now = current_timestamp();
-        let preferred_windows = [30u64, 15u64];
-        
-        for &window_secs in &preferred_windows {
-            let cutoff_time = now.saturating_sub(window_secs);
-            let window_points: Vec<&TimestampedValue> = data.iter()
-                .filter(|tv| tv.timestamp >= cutoff_time)
-                .collect();
-            
-            if window_points.len() >= 3 {
-                return Self::calculate_trend_from_points(&window_points, window_secs);
-            }
-        }
-        
-        let all_points: Vec<&TimestampedValue> = data.iter().collect();
-        if all_points.len() >= 3 {
-            let time_span = all_points.last().unwrap().timestamp 
-                .saturating_sub(all_points.first().unwrap().timestamp);
-            return Self::calculate_trend_from_points(&all_points, time_span.max(1));
-        }
-        
-        Trend::Insufficient
-    }
-    
-    fn calculate_trend_from_points(points: &[&TimestampedValue], time_span_secs: u64) -> Trend {
-        if points.len() < 3 {
-            return Trend::Insufficient;
-        }
-        
-        let values: Vec<f64> = points.iter().map(|tv| tv.value).collect();
-        let first = values[0];
-        let last = values[values.len() - 1];
-        
-        let max_val = values.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
-        let min_val = values.iter().fold(f64::INFINITY, |a, &b| a.min(b));
-        let value_range = max_val - min_val;
-        
-        if value_range < f64::EPSILON * 10.0 {
-            return Trend::Stable;
-        }
-        
-        let time_span = time_span_secs.max(1) as f64;
-        let slope = (last - first) / time_span;
-        
-        let value_magnitude = (first.abs() + last.abs()) / 2.0;
-        let relative_threshold = value_magnitude * 0.05 / time_span;
-        let absolute_threshold = 0.01 / time_span;
-        let threshold = relative_threshold.max(absolute_threshold);
-        
-        let time_factor = if time_span >= 30.0 { 1.0 } else { 1.5 };
-        let adjusted_threshold = threshold * time_factor;
-        
-        if slope.abs() < adjusted_threshold {
-            Trend::Stable
-        } else if slope > 0.0 {
-            Trend::Increasing
-        } else {
-            Trend::Decreasing
-        }
-    }
-    
     fn push_value_to_deque(deque: &mut VecDeque<TimestampedValue>, value: f64, timestamp: u64, max_size: usize) {
         deque.push_back(TimestampedValue { timestamp, value });
         while deque.len() > max_size {
@@ -370,7 +257,7 @@ impl MetricsHistory {
     }
     
     pub fn trim_old_data(&mut self) {
-        let cutoff = current_timestamp().saturating_sub(300); // 5 minutes
+        let cutoff = current_timestamp().saturating_sub(305); // 5 minutes
         
         DataAnalyzer::trim_deque(&mut self.tps, cutoff);
         DataAnalyzer::trim_deque(&mut self.prompt_tps, cutoff);
@@ -407,7 +294,7 @@ pub struct ModelMetricsHistory {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AllModelMetricsHistory {
+pub struct AllMetricsHistory {
     pub models: std::collections::HashMap<String, MetricsHistory>,
     pub total_llama_memory_mb: VecDeque<TimestampedValue>,
     pub cpu_usage_percent: VecDeque<TimestampedValue>,
@@ -418,13 +305,13 @@ pub struct AllModelMetricsHistory {
     pub max_size: usize,
 }
 
-impl Default for AllModelMetricsHistory {
+impl Default for AllMetricsHistory {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl AllModelMetricsHistory {
+impl AllMetricsHistory {
     pub fn new() -> Self {
         Self::with_capacity(crate::constants::HISTORY_SIZE)
     }
@@ -440,7 +327,7 @@ impl AllModelMetricsHistory {
         }
     }
     
-    pub fn push(&mut self, all_metrics: &AllModelMetrics) {
+    pub fn push(&mut self, all_metrics: &AllMetrics) {
         let timestamp = current_timestamp();
         
         DataAnalyzer::push_value_to_deque(&mut self.total_llama_memory_mb, all_metrics.total_llama_memory_mb, timestamp, self.max_size);

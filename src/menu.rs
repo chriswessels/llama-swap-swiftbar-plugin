@@ -1,15 +1,15 @@
 use bitbar::{Menu, MenuItem, ContentItem, attr};
 use crate::{icons, charts};
-use crate::models::{ServiceStatus, AllModelMetricsHistory, AllModelMetrics, MetricsHistory, TimestampedValue, Trend};
+use crate::models::{ServiceStatus, AllMetricsHistory, AllMetrics, MetricsHistory, TimestampedValue};
 use reqwest::blocking::Client;
 use std::collections::VecDeque;
 
 pub struct PluginState {
     #[allow(dead_code)]
     pub http_client: Client,
-    pub metrics_history: AllModelMetricsHistory,
+    pub metrics_history: AllMetricsHistory,
     pub current_status: ServiceStatus,
-    pub current_all_metrics: Option<AllModelMetrics>,
+    pub current_all_metrics: Option<AllMetrics>,
     #[allow(dead_code)]
     pub error_count: usize,
 }
@@ -32,27 +32,11 @@ impl MenuBuilder {
     }
     
     fn add_title(&mut self, status: ServiceStatus) {
-        match icons::get_status_icon_png(status) {
-            Ok(menu_image) => {
-                let item = ContentItem::new("").image(menu_image).unwrap();
-                self.items.push(MenuItem::Content(item));
-            }
-            Err(e) => {
-                eprintln!("Failed to generate status icon: {}", e);
-                self.add_text_title(status);
-            }
-        }
+        let icon = icons::get_status_icon(status);
+        let item = ContentItem::new("").image(icon.clone()).unwrap();
+        self.items.push(MenuItem::Content(item));
     }
-    
-    fn add_text_title(&mut self, status: ServiceStatus) {
-        let title = match status {
-            ServiceStatus::Running => "🟢 Llama-Swap",
-            ServiceStatus::Stopped => "🔴 Llama-Swap",
-            ServiceStatus::Unknown => "⚪ Llama-Swap",
-        };
-        self.items.push(MenuItem::Content(ContentItem::new(title)));
-    }
-    
+
     fn add_separator(&mut self) {
         self.items.push(MenuItem::Sep);
     }
@@ -67,11 +51,11 @@ impl MenuBuilder {
     fn add_model_metrics_section(&mut self, model_name: &str, history: &MetricsHistory, current_metrics: &crate::models::Metrics) {
         self.add_header(model_name);
         
-        if let Some(item) = self.create_metric("Generation", &history.tps, None, charts::MetricType::Tps, format_tps, MetricDisplayType::Simple, history) {
+        if let Some(item) = self.create_metric("Prompt Processing", &history.prompt_tps, None, charts::MetricType::Prompt, format_tps, MetricDisplayType::Simple, history) {
             self.items.push(item);
         }
-        
-        if let Some(item) = self.create_metric("Prompt", &history.prompt_tps, None, charts::MetricType::Prompt, format_tps, MetricDisplayType::Simple, history) {
+
+        if let Some(item) = self.create_metric("Generation", &history.tps, None, charts::MetricType::Tps, format_tps, MetricDisplayType::Simple, history) {
             self.items.push(item);
         }
         
@@ -82,7 +66,7 @@ impl MenuBuilder {
         self.add_queue_status(current_metrics);
     }
     
-    fn add_system_metrics_section(&mut self, history: &AllModelMetricsHistory) {
+    fn add_system_metrics_section(&mut self, history: &AllMetricsHistory) {
         self.add_header("System Metrics");
         
         if !history.cpu_usage_percent.is_empty() {
@@ -137,7 +121,7 @@ impl MenuBuilder {
         chart_type: charts::MetricType,
         format_fn: fn(f64) -> String,
         display_type: MetricDisplayType,
-        history: &AllModelMetricsHistory,
+        history: &AllMetricsHistory,
     ) -> Option<MenuItem> {
         if primary_data.is_empty() {
             return None;
@@ -184,48 +168,47 @@ impl MenuBuilder {
         
         // Control actions
         match status {
-            ServiceStatus::Running => {
-                let mut item = ContentItem::new("🔴 Stop Service");
-                item = item.command(attr::Command::try_from((exe_str, "do_stop")).unwrap()).unwrap();
-                submenu.push(MenuItem::Content(item));
-                
+            ServiceStatus::Running => {                
                 if has_models {
-                    let mut unload = ContentItem::new("🗑️ Unload Model(s)");
+                    let mut unload = ContentItem::new(":eject: Unload Model(s)");
                     unload = unload.command(attr::Command::try_from((exe_str, "do_unload")).unwrap()).unwrap();
                     submenu.push(MenuItem::Content(unload));
                 }
+                let mut item = ContentItem::new(":stop.fill: Stop Llama-Swap Service");
+                item = item.command(attr::Command::try_from((exe_str, "do_stop")).unwrap()).unwrap();
+                submenu.push(MenuItem::Content(item));
             }
             ServiceStatus::Stopped | ServiceStatus::Unknown => {
-                let mut item = ContentItem::new("🟢 Start Service");
+                let mut item = ContentItem::new(":play.fill: Start Llama-Swap Service");
                 item = item.command(attr::Command::try_from((exe_str, "do_start")).unwrap()).unwrap();
                 submenu.push(MenuItem::Content(item));
             }
         }
         
-        let mut restart = ContentItem::new("⟲ Restart Service");
+        let mut restart = ContentItem::new(":arrow.2.circlepath: Restart Llama-Swap Service");
         restart = restart.command(attr::Command::try_from((exe_str, "do_restart")).unwrap()).unwrap();
         submenu.push(MenuItem::Content(restart));
         
         submenu.push(MenuItem::Sep);
         
         // File actions
-        let mut view_logs = ContentItem::new("📄 View Logs");
+        let mut view_logs = ContentItem::new(":doc.text.magnifyingglass: View Llama-Swap Logs");
         view_logs = view_logs.command(attr::Command::try_from((exe_str, "view_logs")).unwrap()).unwrap();
         submenu.push(MenuItem::Content(view_logs));
         
-        let mut edit_config = ContentItem::new("⚙️ Edit Model Configuration");
+        let mut edit_config = ContentItem::new(":gearshape: Edit Llama-Swap Configuration");
         edit_config = edit_config.command(attr::Command::try_from((exe_str, "view_config")).unwrap()).unwrap();
         submenu.push(MenuItem::Content(edit_config));
         
+        submenu.push(MenuItem::Sep);
+        submenu.push(MenuItem::Content(ContentItem::new("Llama-Swap Swiftbar Plugin").color("#666666").unwrap()));
         // Debug actions
         if cfg!(debug_assertions) {
-            submenu.push(MenuItem::Sep);
-            let mut refresh_item = ContentItem::new("🔄 Force Refresh");
-            refresh_item = refresh_item.refresh();
+            let refresh_item = ContentItem::new(":arrow.clockwise: Force Plugin Refresh").refresh();
             submenu.push(MenuItem::Content(refresh_item));
         }
         
-        let mut settings_item = ContentItem::new("⚙️ Settings");
+        let mut settings_item = ContentItem::new(":gearshape.fill: Advanced");
         settings_item = settings_item.sub(submenu);
         self.items.push(MenuItem::Content(settings_item));
     }
@@ -274,7 +257,7 @@ fn add_chart(item: &mut ContentItem, data: &VecDeque<TimestampedValue>, chart_ty
     }
 }
 
-fn get_system_insights(metric_name: &str, history: &AllModelMetricsHistory) -> crate::models::MetricInsights {
+fn get_system_insights(metric_name: &str, history: &AllMetricsHistory) -> crate::models::MetricInsights {
     match metric_name {
         "CPU" => history.get_cpu_insights(),
         "Memory" => history.get_system_memory_insights(),
@@ -290,7 +273,7 @@ fn build_submenu(
     format_fn: fn(f64) -> String,
     display_type: &MetricDisplayType,
     model_history: Option<&MetricsHistory>,
-    system_history: Option<&AllModelMetricsHistory>,
+    system_history: Option<&AllMetricsHistory>,
 ) -> Vec<MenuItem> {
     let mut submenu = Vec::new();
     
@@ -369,19 +352,6 @@ fn build_submenu(
         }
     }
     
-    // Trend information
-    if insights.data_points >= 3 {
-        let trend_desc = match insights.trend {
-            Trend::Increasing => "▲ Increasing",
-            Trend::Decreasing => "▼ Decreasing",
-            Trend::Stable => "▶ Stable",
-            Trend::Insufficient => "Insufficient data",
-        };
-        submenu.push(MenuItem::Content(
-            ContentItem::new(format!("Trend: {}", trend_desc)).color(insights.trend.color()).unwrap()
-        ));
-    }
-    
     // Dataset duration
     let time_text = if primary_data.len() >= 2 {
         let oldest = primary_data.front().unwrap().timestamp;
@@ -402,7 +372,7 @@ fn build_submenu(
     submenu
 }
 
-fn calculate_total_system_memory(history: &AllModelMetricsHistory) -> f64 {
+fn calculate_total_system_memory(history: &AllMetricsHistory) -> f64 {
     if let (Some(latest_used_gb), Some(latest_percent)) = (
         history.used_memory_gb.back(),
         history.memory_usage_percent.back()
@@ -527,8 +497,8 @@ mod tests {
         let state = create_test_state(ServiceStatus::Running);
         let menu_str = build_menu(&state).unwrap();
         
-        assert!(menu_str.contains("Stop Service"));
-        assert!(!menu_str.contains("Start Service"));
+        assert!(menu_str.contains("Stop Llama-Swap Service"));
+        assert!(!menu_str.contains("Start Llama-Swap Service"));
     }
     
     #[test]
@@ -536,8 +506,8 @@ mod tests {
         let state = create_test_state(ServiceStatus::Stopped);
         let menu_str = build_menu(&state).unwrap();
         
-        assert!(menu_str.contains("Start Service"));
-        assert!(!menu_str.contains("Stop Service"));
+        assert!(menu_str.contains("Start Llama-Swap Service"));
+        assert!(!menu_str.contains("Stop Llama-Swap Service"));
     }
     
     #[test]
@@ -554,7 +524,7 @@ mod tests {
         PluginState {
             http_client: reqwest::blocking::Client::new(),
             current_status: status,
-            metrics_history: AllModelMetricsHistory::new(),
+            metrics_history: AllMetricsHistory::new(),
             current_all_metrics: None,
             error_count: 0,
         }

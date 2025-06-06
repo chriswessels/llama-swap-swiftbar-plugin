@@ -17,8 +17,9 @@ pub const MIN_STARTING_DURATION_SECS: u64 = 10;  // Minimum time in Starting mod
 
 // Chart configuration
 pub const CHART_WIDTH: u32 = 60;
-pub const CHART_HEIGHT: u32 = 15;
+pub const CHART_HEIGHT: u32 = 20;
 pub const HISTORY_SIZE: usize = 300; // 5 minutes at 1-second intervals (adaptive polling)
+// TODO: ADD TIME BASED CUTOFF HERE
 
 // File paths (using home directory expansion)
 pub const LOG_FILE_PATH: &str = "~/Library/Logs/LlamaSwap.log";
@@ -33,5 +34,5 @@ pub const COLOR_MEM_LINE: (u8, u8, u8) = (0, 191, 255);    // Deep sky blue - Me
 pub const COLOR_KV_CACHE_LINE: (u8, u8, u8) = (147, 112, 219); // Medium slate blue - KV cache
 
 // Icon configuration
-pub const STATUS_DOT_SIZE: u32 = 8;
-pub const STATUS_DOT_OFFSET: u32 = 3; // From bottom-right corner
+pub const STATUS_DOT_SIZE: u32 = 10;
+pub const STATUS_DOT_OFFSET: u32 = 1; // From bottom-right corner

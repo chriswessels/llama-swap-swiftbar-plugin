@@ -61,20 +61,8 @@ fn restart_service() -> crate::Result<()> {
     eprintln!("Restarting Llama-Swap service...");
     
     ensure_service_installed()?;
-    let service_context = ServiceContext::new()?;
-    
-    match run_launchctl_command("kickstart", &["-kp", &service_context.service_target]) {
-        Ok(output) if output.status.success() => {
-            eprintln!("Service restarted successfully");
-            Ok(())
-        }
-        _ => {
-            eprintln!("Kickstart failed, falling back to stop+start");
-            stop_service()?;
-            std::thread::sleep(std::time::Duration::from_millis(500));
-            start_service()
-        }
-    }
+    stop_service()?;
+    start_service()
 }
 
 fn unload_models() -> crate::Result<()> {
