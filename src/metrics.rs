@@ -175,15 +175,21 @@ pub fn fetch_all_metrics(client: &Client) -> crate::Result<AllMetrics> {
     let models = running_response
         .running
         .iter()
-        .filter(|model| model.state == "ready")
-        .filter_map(|model| {
-            let model_metrics_data = fetch_model_metrics(client, model);
-            create_metrics_from_data(&model_metrics_data)
-                .ok()
-                .map(|metrics| ModelMetrics {
-                    model_name: model.model.clone(),
-                    metrics,
-                })
+        .map(|model| {
+            let model_state = model.model_state();
+            let metrics = if model_state == crate::models::ModelState::Running {
+                let model_metrics_data = fetch_model_metrics(client, model);
+                create_metrics_from_data(&model_metrics_data).unwrap_or_default()
+            } else {
+                // For loading/unknown models, use empty metrics
+                Metrics::default()
+            };
+            
+            ModelMetrics {
+                model_name: model.model.clone(),
+                model_state,
+                metrics,
+            }
         })
         .collect();
     

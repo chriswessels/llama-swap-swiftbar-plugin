@@ -2,8 +2,10 @@ use image::{Rgba, RgbaImage, DynamicImage};
 use png::{BitDepth, ColorType, Encoder, PixelDimensions, Unit};
 use std::sync::OnceLock;
 
-use crate::models::ServiceStatus;
-use crate::constants::{COLOR_RUNNING, COLOR_STOPPED, STATUS_DOT_SIZE, STATUS_DOT_OFFSET};
+use crate::models::ProgramState;
+use crate::constants::{STATUS_DOT_SIZE, STATUS_DOT_OFFSET, 
+    COLOR_PROCESSING_QUEUE, COLOR_MODEL_READY, COLOR_MODEL_LOADING, 
+    COLOR_SERVICE_NO_MODEL, COLOR_AGENT_STARTING, COLOR_AGENT_NOT_LOADED};
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 
@@ -16,11 +18,14 @@ pub const LIGHT_BASE_ICON_BYTES: &[u8] =
 /// 1 inch / 0.0254 m × 144 dpi  ≈ 5 669 px per metre
 const RETINA_PPM: u32 = 5_669;
 
-/// Cached status icon images for maximum performance
+/// Cached icon images for maximum performance
 struct IconCache {
-    running: bitbar::attr::Image,
-    stopped: bitbar::attr::Image,
-    unknown: bitbar::attr::Image,
+    processing_queue: bitbar::attr::Image,
+    model_ready: bitbar::attr::Image,
+    model_loading: bitbar::attr::Image,
+    service_no_model: bitbar::attr::Image,
+    agent_starting: bitbar::attr::Image,
+    agent_not_loaded: bitbar::attr::Image,
 }
 
 static ICON_CACHE: OnceLock<IconCache> = OnceLock::new();
@@ -36,18 +41,27 @@ fn init_icon_cache() -> IconCache {
         .expect("Failed to load light base icon");
     let base_rgba_light = base_icon_light.to_rgba8();
     
-    // Create themed images for each status
-    let running_image = create_themed_status_icon(&base_rgba_light, &base_rgba_dark, COLOR_RUNNING)
-        .expect("Failed to create running icon");
-    let stopped_image = create_themed_status_icon(&base_rgba_light, &base_rgba_dark, COLOR_STOPPED)
-        .expect("Failed to create stopped icon");
-    let unknown_image = create_themed_status_icon(&base_rgba_light, &base_rgba_dark, (128, 128, 128))
-        .expect("Failed to create unknown icon");
+    // Create themed images for each program state
+    let processing_queue = create_themed_status_icon(&base_rgba_light, &base_rgba_dark, COLOR_PROCESSING_QUEUE)
+        .expect("Failed to create processing queue icon");
+    let model_ready = create_themed_status_icon(&base_rgba_light, &base_rgba_dark, COLOR_MODEL_READY)
+        .expect("Failed to create model ready icon");
+    let model_loading = create_themed_status_icon(&base_rgba_light, &base_rgba_dark, COLOR_MODEL_LOADING)
+        .expect("Failed to create model loading icon");
+    let service_no_model = create_themed_status_icon(&base_rgba_light, &base_rgba_dark, COLOR_SERVICE_NO_MODEL)
+        .expect("Failed to create service no model icon");
+    let agent_starting = create_themed_status_icon(&base_rgba_light, &base_rgba_dark, COLOR_AGENT_STARTING)
+        .expect("Failed to create agent starting icon");
+    let agent_not_loaded = create_themed_status_icon(&base_rgba_light, &base_rgba_dark, COLOR_AGENT_NOT_LOADED)
+        .expect("Failed to create agent not loaded icon");
     
     IconCache {
-        running: running_image,
-        stopped: stopped_image,
-        unknown: unknown_image,
+        processing_queue,
+        model_ready,
+        model_loading,
+        service_no_model,
+        agent_starting,
+        agent_not_loaded,
     }
 }
 
@@ -72,14 +86,17 @@ fn create_themed_status_icon(light_base: &RgbaImage, dark_base: &RgbaImage, colo
     Ok(bitbar::attr::Image::from(themed_image_data))
 }
 
-/// Get cached status icon image
-pub fn get_status_icon(status: ServiceStatus) -> &'static bitbar::attr::Image {
+/// Get cached program state icon image
+pub fn get_program_state_icon(state: ProgramState) -> &'static bitbar::attr::Image {
     let cache = ICON_CACHE.get_or_init(init_icon_cache);
     
-    match status {
-        ServiceStatus::Running => &cache.running,
-        ServiceStatus::Stopped => &cache.stopped,
-        ServiceStatus::Unknown => &cache.unknown,
+    match state {
+        ProgramState::ModelProcessingQueue => &cache.processing_queue,
+        ProgramState::ModelReady => &cache.model_ready,
+        ProgramState::ModelLoading => &cache.model_loading,
+        ProgramState::ServiceLoadedNoModel => &cache.service_no_model,
+        ProgramState::AgentStarting => &cache.agent_starting,
+        ProgramState::AgentNotLoaded => &cache.agent_not_loaded,
     }
 }
 

@@ -7,7 +7,7 @@ mod icons;
 mod commands;
 mod service;
 
-use crate::models::{AllMetricsHistory, ServiceStatus, AllMetrics};
+use crate::models::{AllMetricsHistory, AllMetrics, ProgramState, AgentState};
 use reqwest::blocking::Client;
 use std::error::Error;
 use std::io::{self, Write};
@@ -46,12 +46,15 @@ impl PollingMode {
 pub struct PluginState {
     pub http_client: Client,
     pub metrics_history: AllMetricsHistory,
-    pub current_status: ServiceStatus,
+    pub current_program_state: ProgramState,
+    pub current_agent_state: AgentState,
     pub current_all_metrics: Option<AllMetrics>,
     pub error_count: usize,
     pub polling_mode: PollingMode,
-    pub last_status: ServiceStatus,
+    pub last_program_state: ProgramState,
+    pub last_agent_state: AgentState,
     pub mode_change_time: Instant,
+    pub agent_state_change_time: Instant,
 }
 
 impl PluginState {
@@ -63,12 +66,15 @@ impl PluginState {
         Ok(Self {
             http_client,
             metrics_history: AllMetricsHistory::new(),
-            current_status: ServiceStatus::Unknown,
+            current_program_state: ProgramState::AgentNotLoaded,
+            current_agent_state: AgentState::NotInstalled,
             current_all_metrics: None,
             error_count: 0,
             polling_mode: PollingMode::Starting,
-            last_status: ServiceStatus::Unknown,
+            last_program_state: ProgramState::AgentNotLoaded,
+            last_agent_state: AgentState::NotInstalled,
             mode_change_time: Instant::now(),
+            agent_state_change_time: Instant::now(),
         })
     }
     
@@ -88,8 +94,8 @@ impl PluginState {
     }
     
     fn determine_polling_mode(&self) -> PollingMode {
-        // Status transition takes priority
-        if self.current_status != self.last_status {
+        // State transition takes priority
+        if self.current_program_state != self.last_program_state {
             return PollingMode::Starting;
         }
         
@@ -105,8 +111,9 @@ impl PluginState {
         }
         
         // Default based on service status
-        match self.current_status {
-            ServiceStatus::Running => PollingMode::Idle,
+        match self.current_program_state {
+            ProgramState::ModelReady | ProgramState::ServiceLoadedNoModel => PollingMode::Idle,
+            ProgramState::ModelProcessingQueue => PollingMode::Active,
             _ => PollingMode::Starting,
         }
     }
@@ -122,8 +129,8 @@ impl PluginState {
     }
     
     fn get_mode_reason(&self) -> String {
-        if self.current_status != self.last_status {
-            return format!("status changed: {:?} -> {:?}", self.last_status, self.current_status);
+        if self.current_program_state != self.last_program_state {
+            return format!("program state changed: {:?} -> {:?}", self.last_program_state, self.current_program_state);
         }
         
         if let Some(ref all_metrics) = self.current_all_metrics {
@@ -145,8 +152,13 @@ impl PluginState {
     }
     
     fn update_state(&mut self) {
-        self.last_status = self.current_status;
+        self.last_program_state = self.current_program_state;
+        self.last_agent_state = self.current_agent_state;
         
+        // Update agent state with proper transitions
+        self.update_agent_state();
+        
+        // Determine program state based on agent and model status
         match metrics::fetch_all_metrics(&self.http_client) {
             Ok(all_metrics) => self.handle_metrics_success(all_metrics),
             Err(e) => self.handle_metrics_error(e),
@@ -155,25 +167,109 @@ impl PluginState {
         self.update_polling_mode();
     }
     
+    fn update_agent_state(&mut self) {
+        let is_service_running = service::is_service_running(service::DetectionMethod::LaunchctlList);
+        
+        let new_agent_state = match (self.current_agent_state, is_service_running) {
+            // Agent was not installed, now service is running
+            (AgentState::NotInstalled, true) => AgentState::Starting,
+            
+            // Agent was not installed, still not running
+            (AgentState::NotInstalled, false) => AgentState::NotInstalled,
+            
+            // Agent was stopped, now service is running
+            (AgentState::Stopped, true) => AgentState::Starting,
+            
+            // Agent was stopped, still not running
+            (AgentState::Stopped, false) => AgentState::Stopped,
+            
+            // Agent was starting, service still running - check if we should transition to Running
+            (AgentState::Starting, true) => {
+                // After 5 seconds of starting, consider it running if service is up
+                if self.agent_state_change_time.elapsed() > Duration::from_secs(5) {
+                    AgentState::Running
+                } else {
+                    AgentState::Starting
+                }
+            },
+            
+            // Agent was starting but service stopped
+            (AgentState::Starting, false) => AgentState::Stopped,
+            
+            // Agent was running, service still up
+            (AgentState::Running, true) => AgentState::Running,
+            
+            // Agent was running but service stopped
+            (AgentState::Running, false) => AgentState::Stopped,
+        };
+        
+        if new_agent_state != self.current_agent_state {
+            eprintln!("Agent state: {:?} -> {:?}", self.current_agent_state, new_agent_state);
+            self.current_agent_state = new_agent_state;
+            self.agent_state_change_time = Instant::now();
+        }
+    }
+    
     fn handle_metrics_success(&mut self, all_metrics: AllMetrics) {
-        self.current_status = ServiceStatus::Running;
         self.metrics_history.push(&all_metrics);
-        self.current_all_metrics = Some(all_metrics);
+        self.current_all_metrics = Some(all_metrics.clone());
         self.error_count = 0;
+        
+        // Determine program state based on agent state and metrics
+        self.current_program_state = self.determine_program_state_from_agent_and_models(&all_metrics);
     }
     
     fn handle_metrics_error(&mut self, error: Box<dyn Error>) {
         eprintln!("Metrics fetch failed: {}", error);
         self.error_count += 1;
         
-        self.current_status = if service::is_service_running(service::DetectionMethod::LaunchctlList) {
-            eprintln!("Service is running but API is not responding");
-            ServiceStatus::Running
-        } else {
-            ServiceStatus::Stopped
+        // Set program state based on agent state when metrics fail
+        self.current_program_state = match self.current_agent_state {
+            AgentState::Running => ProgramState::ServiceLoadedNoModel,
+            AgentState::Starting => ProgramState::AgentStarting,
+            AgentState::Stopped => ProgramState::AgentNotLoaded,
+            AgentState::NotInstalled => ProgramState::AgentNotLoaded,
         };
         
-        self.current_all_metrics = None;
+        if !matches!(self.current_agent_state, AgentState::Running) {
+            self.current_all_metrics = None;
+            self.metrics_history.clear();
+        } else {
+            self.current_all_metrics = None;
+        }
+    }
+    
+    fn determine_program_state_from_agent_and_models(&self, all_metrics: &AllMetrics) -> ProgramState {
+        // First check agent state
+        match self.current_agent_state {
+            AgentState::NotInstalled | AgentState::Stopped => ProgramState::AgentNotLoaded,
+            AgentState::Starting => ProgramState::AgentStarting,
+            AgentState::Running => {
+                // Agent is running, check model states
+                if all_metrics.models.is_empty() {
+                    ProgramState::ServiceLoadedNoModel
+                } else {
+                    // Check if any models are loading
+                    let has_loading_models = all_metrics.models.iter()
+                        .any(|m| m.model_state == crate::models::ModelState::Loading);
+                    
+                    if has_loading_models {
+                        ProgramState::ModelLoading
+                    } else {
+                        // Check for queue activity in running models
+                        let has_queue_activity = all_metrics.models.iter()
+                            .filter(|m| m.model_state == crate::models::ModelState::Running)
+                            .any(|m| m.metrics.requests_processing > 0 || m.metrics.requests_deferred > 0);
+                        
+                        if has_queue_activity {
+                            ProgramState::ModelProcessingQueue
+                        } else {
+                            ProgramState::ModelReady
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -252,7 +348,8 @@ fn render_frame(state: &mut PluginState) -> Result<String> {
     let menu_state = menu::PluginState {
         http_client: state.http_client.clone(),
         metrics_history: state.metrics_history.clone(),
-        current_status: state.current_status,
+        current_program_state: state.current_program_state,
+        current_agent_state: state.current_agent_state,
         current_all_metrics: state.current_all_metrics.clone(),
         error_count: state.error_count,
     };

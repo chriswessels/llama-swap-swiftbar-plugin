@@ -25,13 +25,18 @@ pub const HISTORY_SIZE: usize = 300; // 5 minutes at 1-second intervals (adaptiv
 pub const LOG_FILE_PATH: &str = "~/Library/Logs/LlamaSwap.log";
 pub const CONFIG_FILE_PATH: &str = "~/.llamaswap/config.yaml";
 
-// Colors (RGB)
-pub const COLOR_RUNNING: (u8, u8, u8) = (0, 200, 83);      // Green
-pub const COLOR_STOPPED: (u8, u8, u8) = (213, 0, 0);       // Red
 pub const COLOR_TPS_LINE: (u8, u8, u8) = (0, 255, 127);    // Spring green - Generation speed
 pub const COLOR_PROMPT_LINE: (u8, u8, u8) = (255, 215, 0); // Gold - Prompt speed
 pub const COLOR_MEM_LINE: (u8, u8, u8) = (0, 191, 255);    // Deep sky blue - Memory
 pub const COLOR_KV_CACHE_LINE: (u8, u8, u8) = (147, 112, 219); // Medium slate blue - KV cache
+
+// Program state colors (RGB)
+pub const COLOR_PROCESSING_QUEUE: (u8, u8, u8) = (0, 122, 255);   // Blue
+pub const COLOR_MODEL_READY: (u8, u8, u8) = (52, 199, 89);        // Green
+pub const COLOR_MODEL_LOADING: (u8, u8, u8) = (255, 149, 0);      // Yellow
+pub const COLOR_SERVICE_NO_MODEL: (u8, u8, u8) = (142, 142, 147); // Grey
+pub const COLOR_AGENT_STARTING: (u8, u8, u8) = (255, 149, 0);     // Yellow
+pub const COLOR_AGENT_NOT_LOADED: (u8, u8, u8) = (255, 59, 48);   // Red
 
 // Icon configuration
 pub const STATUS_DOT_SIZE: u32 = 10;

@@ -1,6 +1,6 @@
 use bitbar::{Menu, MenuItem, ContentItem, attr};
 use crate::{icons, charts};
-use crate::models::{ServiceStatus, AllMetricsHistory, AllMetrics, MetricsHistory, TimestampedValue};
+use crate::models::{AllMetricsHistory, AllMetrics, MetricsHistory, TimestampedValue, ProgramState, AgentState};
 use reqwest::blocking::Client;
 use std::collections::VecDeque;
 
@@ -8,8 +8,9 @@ pub struct PluginState {
     #[allow(dead_code)]
     pub http_client: Client,
     pub metrics_history: AllMetricsHistory,
-    pub current_status: ServiceStatus,
     pub current_all_metrics: Option<AllMetrics>,
+    pub current_program_state: ProgramState,
+    pub current_agent_state: AgentState,
     #[allow(dead_code)]
     pub error_count: usize,
 }
@@ -31,10 +32,26 @@ impl MenuBuilder {
         Self { items: Vec::new() }
     }
     
-    fn add_title(&mut self, status: ServiceStatus) {
-        let icon = icons::get_status_icon(status);
+    fn add_title(&mut self, program_state: ProgramState) {
+        let icon = icons::get_program_state_icon(program_state);
         let item = ContentItem::new("").image(icon.clone()).unwrap();
         self.items.push(MenuItem::Content(item));
+    }
+    
+    fn add_status_message(&mut self, program_state: ProgramState) {
+        let message = program_state.status_message();
+        let color = match program_state {
+            ProgramState::ModelProcessingQueue => "#007AFF", // blue
+            ProgramState::ModelReady => "#34C759",          // green
+            ProgramState::ModelLoading => "#FF9500",        // yellow
+            ProgramState::ServiceLoadedNoModel => "#8E8E93", // grey
+            ProgramState::AgentStarting => "#FF9500",       // yellow
+            ProgramState::AgentNotLoaded => "#FF3B30",      // red
+        };
+        
+        let mut status_item = ContentItem::new(message);
+        status_item = status_item.color(color).unwrap();
+        self.items.push(MenuItem::Content(status_item));
     }
 
     fn add_separator(&mut self) {
@@ -160,15 +177,15 @@ impl MenuBuilder {
         self.items.push(MenuItem::Content(queue_item));
     }
     
-    fn add_settings_section(&mut self, status: ServiceStatus, has_models: bool) {
+    fn add_settings_section(&mut self, program_state: ProgramState, has_models: bool) {
         let exe = std::env::current_exe().unwrap();
         let exe_str = exe.to_str().unwrap();
         
         let mut submenu = Vec::new();
         
-        // Control actions
-        match status {
-            ServiceStatus::Running => {                
+        // Control actions based on program state
+        match program_state {
+            ProgramState::ModelProcessingQueue | ProgramState::ModelReady | ProgramState::ServiceLoadedNoModel => {                
                 if has_models {
                     let mut unload = ContentItem::new(":eject: Unload Model(s)");
                     unload = unload.command(attr::Command::try_from((exe_str, "do_unload")).unwrap()).unwrap();
@@ -178,10 +195,20 @@ impl MenuBuilder {
                 item = item.command(attr::Command::try_from((exe_str, "do_stop")).unwrap()).unwrap();
                 submenu.push(MenuItem::Content(item));
             }
-            ServiceStatus::Stopped | ServiceStatus::Unknown => {
+            ProgramState::AgentNotLoaded | ProgramState::ModelLoading => {
                 let mut item = ContentItem::new(":play.fill: Start Llama-Swap Service");
                 item = item.command(attr::Command::try_from((exe_str, "do_start")).unwrap()).unwrap();
                 submenu.push(MenuItem::Content(item));
+            }
+            ProgramState::AgentStarting => {
+                // Show both start and stop options during transition
+                let mut start_item = ContentItem::new(":play.fill: Start Llama-Swap Service");
+                start_item = start_item.command(attr::Command::try_from((exe_str, "do_start")).unwrap()).unwrap();
+                submenu.push(MenuItem::Content(start_item));
+                
+                let mut stop_item = ContentItem::new(":stop.fill: Stop Llama-Swap Service");
+                stop_item = stop_item.command(attr::Command::try_from((exe_str, "do_stop")).unwrap()).unwrap();
+                submenu.push(MenuItem::Content(stop_item));
             }
         }
         
@@ -439,15 +466,20 @@ fn calculate_stats_for_data(data: &VecDeque<TimestampedValue>) -> crate::models:
 pub fn build_menu(state: &PluginState) -> crate::Result<String> {
     let mut menu = MenuBuilder::new();
     
-    menu.add_title(state.current_status);
+    menu.add_title(state.current_program_state);
     menu.add_separator();
+    menu.add_status_message(state.current_program_state);
+    menu.add_separator();
+    
     let has_models = state.current_all_metrics
         .as_ref()
         .map(|m| !m.models.is_empty())
         .unwrap_or(false);
     
-    if state.current_status == ServiceStatus::Running {
-        menu.add_separator();
+    if matches!(state.current_program_state, 
+        ProgramState::ModelProcessingQueue | 
+        ProgramState::ModelReady | 
+        ProgramState::ServiceLoadedNoModel) {
         menu.add_system_metrics_section(&state.metrics_history);
         
         if let Some(ref all_metrics) = state.current_all_metrics {
@@ -463,7 +495,7 @@ pub fn build_menu(state: &PluginState) -> crate::Result<String> {
     }
     
     menu.add_separator();
-    menu.add_settings_section(state.current_status, has_models);
+    menu.add_settings_section(state.current_program_state, has_models);
     
     let built_menu = menu.build();
     Ok(built_menu.to_string())
@@ -494,7 +526,7 @@ mod tests {
     
     #[test]
     fn test_menu_with_running_service() {
-        let state = create_test_state(ServiceStatus::Running);
+        let state = create_test_state(ProgramState::ModelReady);
         let menu_str = build_menu(&state).unwrap();
         
         assert!(menu_str.contains("Stop Llama-Swap Service"));
@@ -503,7 +535,7 @@ mod tests {
     
     #[test]
     fn test_menu_with_stopped_service() {
-        let state = create_test_state(ServiceStatus::Stopped);
+        let state = create_test_state(ProgramState::AgentNotLoaded);
         let menu_str = build_menu(&state).unwrap();
         
         assert!(menu_str.contains("Start Llama-Swap Service"));
@@ -520,10 +552,11 @@ mod tests {
     }
     
     
-    fn create_test_state(status: ServiceStatus) -> PluginState {
+    fn create_test_state(program_state: ProgramState) -> PluginState {
         PluginState {
             http_client: reqwest::blocking::Client::new(),
-            current_status: status,
+            current_program_state: program_state,
+            current_agent_state: AgentState::Running,
             metrics_history: AllMetricsHistory::new(),
             current_all_metrics: None,
             error_count: 0,

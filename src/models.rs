@@ -3,16 +3,68 @@ use std::collections::VecDeque;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ServiceStatus {
+pub enum ModelState {
     Running,
-    Stopped,
+    Loading,
     Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum AgentState {
+    NotInstalled,
+    Stopped,
+    Starting,
+    Running,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ProgramState {
+    ModelProcessingQueue,  // blue
+    ModelReady,           // green  
+    ModelLoading,         // yellow
+    ServiceLoadedNoModel, // grey
+    AgentStarting,        // yellow
+    AgentNotLoaded,       // red
+}
+
+impl ProgramState {
+    pub fn icon_color(&self) -> &'static str {
+        match self {
+            ProgramState::ModelProcessingQueue => "blue",
+            ProgramState::ModelReady => "green",
+            ProgramState::ModelLoading => "yellow",
+            ProgramState::ServiceLoadedNoModel => "grey",
+            ProgramState::AgentStarting => "yellow",
+            ProgramState::AgentNotLoaded => "red",
+        }
+    }
+    
+    pub fn status_message(&self) -> &'static str {
+        match self {
+            ProgramState::ModelProcessingQueue => "Model actively processing queue",
+            ProgramState::ModelReady => "Model ready, queue empty",
+            ProgramState::ModelLoading => "Model loading",
+            ProgramState::ServiceLoadedNoModel => "Service loaded, no model loaded",
+            ProgramState::AgentStarting => "Agent starting",
+            ProgramState::AgentNotLoaded => "Agent not loaded",
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
 pub struct RunningModel {
     pub model: String,
     pub state: String,
+}
+
+impl RunningModel {
+    pub fn model_state(&self) -> ModelState {
+        match self.state.as_str() {
+            "ready" => ModelState::Running,
+            "starting" | "stopping" => ModelState::Loading,
+            _ => ModelState::Unknown,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -30,6 +82,7 @@ pub struct MetricsResponse {
 #[derive(Debug, Clone)]
 pub struct ModelMetrics {
     pub model_name: String,
+    pub model_state: ModelState,
     pub metrics: Metrics,
 }
 
@@ -49,7 +102,7 @@ pub struct AllMetrics {
     pub system_metrics: SystemMetrics,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Metrics {
     pub prompt_tokens_per_sec: f64,
     pub predicted_tokens_per_sec: f64,

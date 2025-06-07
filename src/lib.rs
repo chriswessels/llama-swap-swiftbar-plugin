@@ -16,6 +16,7 @@ pub use crate::models::{
     Metrics,
     MetricStats,
     MetricsHistory,
-    ServiceStatus,
+    ProgramState,
+    AgentState,
     TimestampedValue,
 };
