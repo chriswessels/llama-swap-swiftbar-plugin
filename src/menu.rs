@@ -229,9 +229,18 @@ impl MenuBuilder {
     }
     
     fn add_system_metrics_section(&mut self, history: &AllMetricsHistory) {
+        let has_cpu = !history.cpu_usage_percent.is_empty();
+        let has_memory = !history.memory_usage_percent.is_empty() && !history.used_memory_gb.is_empty();
+        let has_llama_memory = !history.total_llama_memory_mb.is_empty() && !history.used_memory_gb.is_empty();
+        
+        // Only show header if we have any metrics to display
+        if !has_cpu && !has_memory && !has_llama_memory {
+            return;
+        }
+        
         self.add_header("System Metrics");
         
-        if !history.cpu_usage_percent.is_empty() {
+        if has_cpu {
             if let Some(item) = Self::create_metric(&MetricConfig {
                 name: "CPU",
                 primary_data: &history.cpu_usage_percent,
@@ -245,7 +254,7 @@ impl MenuBuilder {
             }
         }
         
-        if !history.memory_usage_percent.is_empty() && !history.used_memory_gb.is_empty() {
+        if has_memory {
             if let Some(item) = Self::create_metric(&MetricConfig {
                 name: "Memory",
                 primary_data: &history.memory_usage_percent,
@@ -259,7 +268,7 @@ impl MenuBuilder {
             }
         }
         
-        if !history.total_llama_memory_mb.is_empty() && !history.used_memory_gb.is_empty() {
+        if has_llama_memory {
             if let Some(item) = Self::create_metric(&MetricConfig {
                 name: "Llama Memory",
                 primary_data: &history.total_llama_memory_mb,
@@ -316,10 +325,9 @@ impl MenuBuilder {
         
         let mut submenu = Vec::new();
         
-        // Calculate system state once to avoid inconsistencies
-        let plist_installed = crate::commands::is_service_installed().unwrap_or(false);
+        // Use the comprehensive service status from state
+        let service_status = &state.service_status;
         let binary_available = crate::commands::find_llama_swap_binary().is_ok();
-        let service_running = crate::service::is_service_running();
         
         // Show appropriate actions based on what's missing
         if matches!(display_state, DisplayState::AgentNotLoaded) {
@@ -333,19 +341,19 @@ impl MenuBuilder {
             
             submenu.push(MenuItem::Content(ContentItem::new(format!(
                 "{} Plist: {}",
-                if plist_installed { ":checkmark.circle:" } else { ":xmark.circle:" },
-                if plist_installed { "Installed" } else { "Click install below" }
-            )).color(if plist_installed { "#34C759" } else { "#FF9500" }).unwrap()));
+                if service_status.plist_installed { ":checkmark.circle:" } else { ":xmark.circle:" },
+                if service_status.plist_installed { "Installed" } else { "Click install below" }
+            )).color(if service_status.plist_installed { "#34C759" } else { "#FF9500" }).unwrap()));
             
             submenu.push(MenuItem::Content(ContentItem::new(format!(
                 "{} Service: {}",
-                if service_running { ":checkmark.circle:" } else { ":xmark.circle:" },
-                if service_running { "Running" } else { "Stopped" }
-            )).color(if service_running { "#34C759" } else { "#FF9500" }).unwrap()));
+                if service_status.is_fully_running() { ":checkmark.circle:" } else { ":xmark.circle:" },
+                service_status.status_description()
+            )).color(if service_status.is_fully_running() { "#34C759" } else { "#FF9500" }).unwrap()));
             
             // Show plist management actions based on actual plist state
             submenu.push(MenuItem::Sep);
-            if !plist_installed {
+            if !service_status.plist_installed {
                 if let Ok(item) = INSTALL_COMMAND.create_item(exe_str) {
                     submenu.push(MenuItem::Content(item));
                 }
@@ -376,7 +384,7 @@ impl MenuBuilder {
             }
             
             // Add uninstall option when service is installed  
-            if plist_installed {
+            if service_status.plist_installed {
                 if let Ok(item) = UNINSTALL_COMMAND.create_item(exe_str) {
                     submenu.push(MenuItem::Content(item));
                 }
@@ -406,12 +414,19 @@ impl MenuBuilder {
         
         submenu.push(MenuItem::Content(ContentItem::new(format!("Status: {:?} | Plist: {} | Binary: {} | Service: {}", 
             display_state,
-            if plist_installed { "✓" } else { "✗" },
+            if service_status.plist_installed { "✓" } else { "✗" },
             if binary_available { "✓" } else { "✗" },
-            if service_running { "✓" } else { "✗" }
+            if service_status.is_fully_running() { "✓" } else { "✗" }
         ))));
         
-        submenu.push(MenuItem::Content(ContentItem::new(format!("Polling: {} | API Errors: {} | Metrics: {}", 
+        // Detailed service status for debugging
+        submenu.push(MenuItem::Content(ContentItem::new(format!("Service Details: Loaded: {} | Running: {} | API: {}", 
+            if service_status.launchctl_loaded { "✓" } else { "✗" },
+            if service_status.process_running { "✓" } else { "✗" },
+            if service_status.api_responsive { "✓" } else { "✗" }
+        ))));
+        
+        submenu.push(MenuItem::Content(ContentItem::new(format!("Polling Mode: {} | API Errors: {} | Metrics: {}", 
             state.polling_mode.description(),
             state.error_count, 
             if state.current_all_metrics.is_some() { "Yes" } else { "No" }
@@ -636,19 +651,15 @@ pub fn build_menu(state: &PluginState) -> crate::Result<String> {
         .as_ref()
         .is_some_and(|m| !m.models.is_empty());
     
-    if matches!(display_state, 
-        DisplayState::ModelProcessingQueue | 
-        DisplayState::ModelReady | 
-        DisplayState::ServiceLoadedNoModel) {
-        menu.add_system_metrics_section(&state.metrics_history);
-        
-        if let Some(ref all_metrics) = state.current_all_metrics {
-            for model_metrics in &all_metrics.models {
-                if let Some(model_history) = state.metrics_history.get_model_history(&model_metrics.model_name) {
-                    if !model_history.tps.is_empty() {
-                        menu.add_separator();
-                        menu.add_model_metrics_section(&model_metrics.model_name, model_history, &model_metrics.metrics);
-                    }
+    // Show system metrics for all states where they're being collected
+    menu.add_system_metrics_section(&state.metrics_history);
+    
+    if let Some(ref all_metrics) = state.current_all_metrics {
+        for model_metrics in &all_metrics.models {
+            if let Some(model_history) = state.metrics_history.get_model_history(&model_metrics.model_name) {
+                if !model_history.tps.is_empty() {
+                    menu.add_separator();
+                    menu.add_model_metrics_section(&model_metrics.model_name, model_history, &model_metrics.metrics);
                 }
             }
         }

@@ -1,10 +1,65 @@
 use crate::models::{AllMetricsHistory, AllMetrics};
 use crate::state_model::{AgentState, DisplayState, PollingMode, ModelState};
-use crate::metrics;
 use reqwest::blocking::Client;
 use std::collections::HashMap;
 use std::error::Error;
 use std::time::{Duration, Instant};
+
+/// Detailed service status tracking different layers of service management
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ServiceStatus {
+    pub plist_installed: bool,
+    pub launchctl_loaded: bool,
+    pub process_running: bool,
+    pub api_responsive: bool,
+}
+
+impl ServiceStatus {
+    pub fn new() -> Self {
+        Self {
+            plist_installed: false,
+            launchctl_loaded: false,
+            process_running: false,
+            api_responsive: false,
+        }
+    }
+    
+    pub fn update(&mut self, api_success: bool) {
+        self.plist_installed = crate::commands::is_service_installed().unwrap_or(false);
+        self.launchctl_loaded = crate::service::is_service_loaded();
+        self.process_running = crate::service::is_service_running();
+        self.api_responsive = api_success;
+    }
+    
+    /// Service is fully operational (all layers working)
+    pub fn is_fully_running(&self) -> bool {
+        self.plist_installed && self.launchctl_loaded && self.process_running && self.api_responsive
+    }
+    
+    /// Service is ready to start (plist installed but not running)
+    pub fn is_ready_to_start(&self) -> bool {
+        self.plist_installed && !self.process_running
+    }
+    
+    /// Service has issues that need user attention
+    pub fn has_issues(&self) -> bool {
+        // Process running but API not responding, or loaded but not running
+        (self.process_running && !self.api_responsive) || 
+        (self.launchctl_loaded && !self.process_running)
+    }
+    
+    /// Get user-friendly status description
+    pub fn status_description(&self) -> &'static str {
+        match (self.plist_installed, self.launchctl_loaded, self.process_running, self.api_responsive) {
+            (true, true, true, true) => "Running",
+            (true, true, true, false) => "Process running but API unresponsive",
+            (true, true, false, false) => "Loaded but not running",
+            (true, false, false, false) => "Stopped",
+            (false, _, _, _) => "Not installed",
+            _ => "Unknown state",
+        }
+    }
+}
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
@@ -46,6 +101,7 @@ pub struct PluginState {
     pub agent_state: AgentState,
     pub polling_mode: PollingMode,
     pub model_states: HashMap<String, ModelState>,
+    pub service_status: ServiceStatus,
     
     // Timing for state transitions
     last_state_change: Instant,
@@ -58,11 +114,17 @@ impl PluginState {
             .timeout(Duration::from_secs(crate::constants::API_TIMEOUT_SECS))
             .build()?;
 
+        // Initialize service status
+        let mut service_status = ServiceStatus::new();
+        service_status.update(false); // API not tested yet
+        
         // Determine initial agent state
-        let plist_installed = crate::commands::is_service_installed().unwrap_or(false);
         let binary_available = crate::commands::find_llama_swap_binary().is_ok();
-        let service_running = crate::service::is_service_running();
-        let agent_state = AgentState::from_system_check(plist_installed, binary_available, service_running);
+        let agent_state = AgentState::from_system_check(
+            service_status.plist_installed, 
+            binary_available, 
+            service_status.is_fully_running()
+        );
 
         Ok(Self {
             http_client,
@@ -72,6 +134,7 @@ impl PluginState {
             agent_state,
             polling_mode: PollingMode::Idle,
             model_states: HashMap::new(),
+            service_status,
             last_state_change: Instant::now(),
             startup_time: None,
         })
@@ -128,14 +191,58 @@ impl PluginState {
     }
     
     pub fn update_state(&mut self) {
-        // Update agent state with proper transitions
-        self.update_agent_state();
+        // Always collect system metrics regardless of API state
+        let system_metrics = crate::metrics::collect_system_metrics();
+        let llama_memory_mb = crate::metrics::get_llama_server_memory_mb();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
         
-        // Determine program state based on agent and model status
-        match metrics::fetch_all_metrics(&self.http_client) {
-            Ok(all_metrics) => self.handle_metrics_success(all_metrics),
-            Err(e) => self.handle_metrics_error(e),
-        }
+        // Store system metrics independently
+        crate::models::DataAnalyzer::push_value_to_deque(
+            &mut self.metrics_history.cpu_usage_percent, 
+            system_metrics.cpu_usage_percent, 
+            timestamp, 
+            self.metrics_history.max_size
+        );
+        crate::models::DataAnalyzer::push_value_to_deque(
+            &mut self.metrics_history.memory_usage_percent, 
+            system_metrics.memory_usage_percent, 
+            timestamp, 
+            self.metrics_history.max_size
+        );
+        crate::models::DataAnalyzer::push_value_to_deque(
+            &mut self.metrics_history.used_memory_gb, 
+            system_metrics.used_memory_gb, 
+            timestamp, 
+            self.metrics_history.max_size
+        );
+        crate::models::DataAnalyzer::push_value_to_deque(
+            &mut self.metrics_history.total_llama_memory_mb, 
+            llama_memory_mb, 
+            timestamp, 
+            self.metrics_history.max_size
+        );
+        
+        // Check API connectivity first, then update agent state based on that
+        let api_success = match crate::metrics::fetch_all_metrics(&self.http_client) {
+            Ok(all_metrics) => {
+                self.handle_metrics_success(all_metrics);
+                true
+            }
+            Err(e) => {
+                eprintln!("Debug: Metrics fetch failed in state {:?}: {}", self.agent_state, e);
+                self.handle_metrics_error(e);
+                false
+            }
+        };
+        
+        // Update service status with API connectivity result
+        self.service_status.update(api_success);
+        
+        // Update agent state with proper transitions, using comprehensive service status
+        self.update_agent_state();
         
         self.update_polling_mode();
     }
@@ -144,18 +251,20 @@ impl PluginState {
         let old_state = self.agent_state;
         
         // Get current system status
-        let plist_installed = crate::commands::is_service_installed().unwrap_or(false);
         let binary_available = crate::commands::find_llama_swap_binary().is_ok();
-        let service_running = crate::service::is_service_running();
         
-        // Compute new state
-        let new_state = AgentState::from_system_check(plist_installed, binary_available, service_running);
+        // Compute new state using comprehensive service status
+        let new_state = AgentState::from_system_check(
+            self.service_status.plist_installed, 
+            binary_available, 
+            self.service_status.is_fully_running()
+        );
         
         // Handle Starting -> Running/Stopped transition after timeout
         if let AgentState::Starting = self.agent_state {
             if let Some(startup_time) = self.startup_time {
                 if startup_time.elapsed() >= Duration::from_secs(5) {
-                    self.agent_state = if service_running {
+                    self.agent_state = if self.service_status.is_fully_running() {
                         AgentState::Running
                     } else {
                         AgentState::Stopped
@@ -201,7 +310,10 @@ impl PluginState {
             self.metrics_history.memory_usage_percent.clear();
             self.metrics_history.used_memory_gb.clear();
         } else {
+            // When agent is running but API fails, keep system metrics but clear model metrics
             self.current_all_metrics = None;
+            self.metrics_history.models.clear();
+            // Note: System metrics (CPU, memory, llama memory) are now collected independently and not cleared
         }
     }
     

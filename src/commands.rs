@@ -23,11 +23,21 @@ fn start_service() -> crate::Result<()> {
     ensure_service_installed()?;
     let service_context = ServiceContext::new()?;
     
-    // Run the setup commands
+    // Enable the service (safe to run multiple times)
     let _ = run_launchctl_command("enable", &[&service_context.service_target]);
-    let _ = run_launchctl_command("bootstrap", &[&service_context.target_domain, &service_context.plist_path]);
     
-    // The final kickstart command is critical
+    // Only bootstrap if not already loaded
+    if !crate::service::is_service_loaded() {
+        let bootstrap_output = run_launchctl_command("bootstrap", &[&service_context.target_domain, &service_context.plist_path]);
+        if let Ok(output) = bootstrap_output {
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                eprintln!("Bootstrap warning: {stderr}");
+            }
+        }
+    }
+    
+    // Kickstart the service (this actually starts it)
     let output = with_context(
         run_launchctl_command("kickstart", &["-kp", &service_context.service_target]),
         START_SERVICE
@@ -209,11 +219,16 @@ fn create_default_log() -> &'static str {
 fn install_service() -> crate::Result<()> {
     eprintln!("Installing Llama-Swap service...");
     
-    // Just install the plist - don't check preconditions
-    // The FSM will detect the new state and show appropriate UI
     let binary_path = find_llama_swap_binary()?;
     let plist_content = generate_plist_content(&binary_path)?;
     let plist_path = get_plist_path()?;
+    let service_context = ServiceContext::new()?;
+    
+    // If service is already loaded, unload it first to refresh the plist
+    if crate::service::is_service_loaded() {
+        eprintln!("Unloading existing service to refresh plist...");
+        let _ = run_launchctl_command("bootout", &[&service_context.service_target]);
+    }
     
     // Create LaunchAgents directory if it doesn't exist
     if let Some(parent) = std::path::Path::new(&plist_path).parent() {
@@ -238,15 +253,17 @@ fn install_service() -> crate::Result<()> {
 fn uninstall_service() -> crate::Result<()> {
     eprintln!("Uninstalling Llama-Swap service...");
     
-    // Try to stop the service first if it's running (ignore errors)
-    if crate::service::is_service_running() {
-        eprintln!("Stopping service before uninstallation...");
-        let _ = stop_service(); // Continue even if stop fails
+    let service_context = ServiceContext::new()?;
+    
+    // Stop and unload from launchctl first
+    if crate::service::is_service_loaded() {
+        eprintln!("Unloading service from launchctl...");
+        let _ = run_launchctl_command("bootout", &[&service_context.service_target]);
     }
     
     let plist_path = get_plist_path()?;
     
-    // Remove plist file if it exists (ignore if doesn't exist)
+    // Remove plist file if it exists
     if std::path::Path::new(&plist_path).exists() {
         with_context(std::fs::remove_file(&plist_path), "Failed to remove plist file")?;
         eprintln!("Service uninstalled successfully");
@@ -280,6 +297,8 @@ fn generate_plist_content(binary_path: &str) -> crate::Result<String> {
     let log_path = expand_tilde(crate::constants::LOG_FILE_PATH)?;
     let working_dir = get_home_dir()?;
     
+    let config_path = expand_tilde(crate::constants::CONFIG_FILE_PATH)?;
+    
     let plist = format!(r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -289,8 +308,10 @@ fn generate_plist_content(binary_path: &str) -> crate::Result<String> {
     <key>ProgramArguments</key>
     <array>
         <string>{}</string>
-        <string>--port</string>
+        <string>-config</string>
         <string>{}</string>
+        <string>-listen</string>
+        <string>:{}</string>
     </array>
     <key>WorkingDirectory</key>
     <string>{}</string>
@@ -306,6 +327,7 @@ fn generate_plist_content(binary_path: &str) -> crate::Result<String> {
 </plist>"#,
         LAUNCH_AGENT_LABEL,
         binary_path,
+        config_path,
         crate::constants::API_PORT,
         working_dir,
         log_path,
@@ -316,25 +338,26 @@ fn generate_plist_content(binary_path: &str) -> crate::Result<String> {
 }
 
 fn create_default_config() -> &'static str {
-    r#"# Llama-Swap Plugin Configuration
-# Configuration for the SwiftBar plugin
-
-# Service settings
-service:
-  url: "http://127.0.0.1:45786"
-  timeout: 5
-
-# Display settings
-display:
-  update_interval: 5
-  show_metrics: true
-  show_sparklines: true
-
-# Monitoring settings
-monitoring:
-  history_size: 60
-  alert_thresholds:
-    memory_mb: 4096
-    tps_low: 1.0
+    r#"# Llama-Swap Configuration
+models:
+  "Qwen3-30B-A3B-128K":
+        cmd: >-
+        llama-server
+        --metrics
+        --port 8902
+        --model unsloth_Qwen3-30B-A3B-128K-GGUF_Qwen3-30B-A3B-128K-XXX.gguf
+        --n-gpu-layers 999
+        --flash-attn
+        --rope-scaling yarn
+        --rope-scale 4
+        --yarn-orig-ctx 32768
+        --ctx-size 131072
+        --cache-type-k q4_1
+        --cache-type-v q4_1
+        --batch-size 1024
+        --temp 0.6
+        --top-p 0.95
+        --top-k 20
+        --min-p 0
 "#
 }

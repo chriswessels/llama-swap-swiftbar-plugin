@@ -71,7 +71,7 @@ fn parse_prometheus_metrics(text: &str) -> HashMap<String, f64> {
         .collect()
 }
 
-fn collect_system_metrics() -> SystemMetrics {
+pub fn collect_system_metrics() -> SystemMetrics {
     use sysinfo::System;
     
     let mut system = System::new_all();
@@ -98,21 +98,36 @@ fn collect_system_metrics() -> SystemMetrics {
     }
 }
 
-fn get_llama_server_memory_mb() -> f64 {
+pub fn get_llama_server_memory_mb() -> f64 {
     use sysinfo::System;
     
     let system = System::new_all();
-    let total_memory_kb = system
+    let total_memory_bytes = system
         .processes()
         .values()
         .filter(|process| {
             let name = process.name().to_string_lossy();
-            name.contains("llama-server") || name.contains("llama_server") || name.contains("llama-swap")
+            let cmd_line = process.cmd().iter()
+                .map(|s| s.to_string_lossy())
+                .collect::<Vec<_>>()
+                .join(" ");
+            
+            // Only match actual llama server binaries, not processes that mention them in paths
+            let name_matches = name == "llama-server" || name == "llama_server" || name == "llama-swap" || name == "llama-swap-swiftbar";
+            let cmd_starts_with_llama = cmd_line.starts_with("llama-server") || 
+                                       cmd_line.starts_with("llama_server") || 
+                                       cmd_line.starts_with("llama-swap") ||
+                                       cmd_line.contains("/llama-server ") ||
+                                       cmd_line.contains("/llama_server ") ||
+                                       cmd_line.contains("/llama-swap ") ||
+                                       cmd_line.ends_with("llama-swap-swiftbar");
+            
+            name_matches || cmd_starts_with_llama
         })
         .map(sysinfo::Process::memory)
         .sum::<u64>();
     
-    total_memory_kb as f64 / 1024.0
+    total_memory_bytes as f64 / (1024.0 * 1024.0)
 }
 
 fn fetch_model_metrics(client: &Client, model: &RunningModel) -> HashMap<String, f64> {
