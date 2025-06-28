@@ -313,17 +313,41 @@ impl MenuBuilder {
         let exe_str = exe.to_str().unwrap();
         
         let mut submenu = Vec::new();
-        let is_service_installed = crate::commands::is_service_installed().unwrap_or(false);
         
-        // Show install option only when service is not installed
-        if matches!(display_state, DisplayState::AgentNotLoaded) && !is_service_installed {
-            if let Ok(item) = INSTALL_COMMAND.create_item(exe_str) {
-                submenu.push(MenuItem::Content(item));
-                submenu.push(MenuItem::Sep);
-            }
+        // Calculate system state once to avoid inconsistencies
+        let plist_installed = crate::commands::is_service_installed().unwrap_or(false);
+        let binary_available = crate::commands::find_llama_swap_binary().is_ok();
+        let service_running = crate::service::is_service_running();
+        
+        // Show appropriate actions based on what's missing
+        if matches!(display_state, DisplayState::AgentNotLoaded) {
             
-            // Show why installation might be needed
-            submenu.push(MenuItem::Content(ContentItem::new("Service not installed").color("#FF9500").unwrap()));
+            // Show system status for all AgentNotLoaded cases
+            submenu.push(MenuItem::Content(ContentItem::new(format!(
+                "{} Binary: {}",
+                if binary_available { ":checkmark.circle:" } else { ":xmark.circle:" },
+                if binary_available { "Found" } else { "brew install llama-swap" }
+            )).color(if binary_available { "#34C759" } else { "#FF9500" }).unwrap()));
+            
+            submenu.push(MenuItem::Content(ContentItem::new(format!(
+                "{} Plist: {}",
+                if plist_installed { ":checkmark.circle:" } else { ":xmark.circle:" },
+                if plist_installed { "Installed" } else { "Click install below" }
+            )).color(if plist_installed { "#34C759" } else { "#FF9500" }).unwrap()));
+            
+            submenu.push(MenuItem::Content(ContentItem::new(format!(
+                "{} Service: {}",
+                if service_running { ":checkmark.circle:" } else { ":xmark.circle:" },
+                if service_running { "Running" } else { "Stopped" }
+            )).color(if service_running { "#34C759" } else { "#FF9500" }).unwrap()));
+            
+            // Show install command if plist not installed
+            if !plist_installed {
+                submenu.push(MenuItem::Sep);
+                if let Ok(item) = INSTALL_COMMAND.create_item(exe_str) {
+                    submenu.push(MenuItem::Content(item));
+                }
+            }
             submenu.push(MenuItem::Sep);
         } else {
             // Add control commands based on current state (only when service is installed)
@@ -346,7 +370,7 @@ impl MenuBuilder {
             }
             
             // Add uninstall option when service is installed  
-            if is_service_installed {
+            if plist_installed {
                 if let Ok(item) = UNINSTALL_COMMAND.create_item(exe_str) {
                     submenu.push(MenuItem::Content(item));
                 }
@@ -372,10 +396,7 @@ impl MenuBuilder {
         // Simplified debug info
         submenu.push(MenuItem::Sep);
         
-        // System status and state in one line
-        let plist_installed = crate::commands::is_service_installed().unwrap_or(false);
-        let binary_available = crate::commands::find_llama_swap_binary().is_ok();
-        let service_running = crate::service::is_service_running();
+        // System status and state in one line (reuse calculated values)
         
         submenu.push(MenuItem::Content(ContentItem::new(format!("Status: {:?} | Plist: {} | Binary: {} | Service: {}", 
             display_state,

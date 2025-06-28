@@ -21,9 +21,10 @@ impl AgentState {
     pub fn from_system_check(plist_installed: bool, binary_available: bool, service_running: bool) -> Self {
         match (plist_installed, binary_available, service_running) {
             (_, _, true) => AgentState::Running,
-            (true, _, false) => AgentState::Stopped,
+            (true, true, false) => AgentState::Stopped,  // Ready to start
             (false, false, _) => AgentState::NotReady { reason: NotReadyReason::BinaryNotFound },
             (false, true, _) => AgentState::NotReady { reason: NotReadyReason::PlistMissing },
+            (true, false, _) => AgentState::NotReady { reason: NotReadyReason::BinaryNotFound }, // Fix: plist exists but binary missing
         }
     }
     
@@ -43,7 +44,7 @@ pub enum DisplayState {
 impl DisplayState {
     pub fn status_message(&self) -> &'static str {
         match self {
-            DisplayState::AgentNotLoaded => "Agent not loaded",
+            DisplayState::AgentNotLoaded => "Missing requirements",
             DisplayState::AgentStarting => "Starting agent...",
             DisplayState::ServiceLoadedNoModel => "No models loaded",
             DisplayState::ModelLoading => "Loading model...",

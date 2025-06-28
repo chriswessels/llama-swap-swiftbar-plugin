@@ -207,12 +207,12 @@ fn create_default_log() -> &'static str {
 }
 
 fn install_service() -> crate::Result<()> {
-    if is_service_installed()? {
-        return Err("Service already installed".into());
-    }
+    eprintln!("Installing Llama-Swap service...");
     
-    let binary_path = find_llama_swap_binary()?;
-    let plist_content = generate_plist_content(&binary_path)?;
+    // Just install the plist - don't check preconditions
+    // The FSM will detect the new state and show appropriate UI
+    let binary_path = "/usr/local/bin/llama-swap"; // Expected brew install location
+    let plist_content = generate_plist_content(binary_path)?;
     let plist_path = get_plist_path()?;
     
     // Create LaunchAgents directory if it doesn't exist
@@ -220,7 +220,7 @@ fn install_service() -> crate::Result<()> {
         with_context(std::fs::create_dir_all(parent), CREATE_DIR)?;
     }
     
-    // Write plist file
+    // Write plist file (overwrite if exists)
     with_context(std::fs::write(&plist_path, plist_content), CREATE_FILE)?;
     
     // Set proper permissions (644)
@@ -231,17 +231,14 @@ fn install_service() -> crate::Result<()> {
         with_context(std::fs::set_permissions(&plist_path, perms), "Failed to set plist permissions")?;
     }
     
+    eprintln!("Service plist installed successfully");
     Ok(())
 }
 
 fn uninstall_service() -> crate::Result<()> {
     eprintln!("Uninstalling Llama-Swap service...");
     
-    if !is_service_installed()? {
-        return Err("Service is not installed.".into());
-    }
-    
-    // Try to stop the service first if it's running
+    // Try to stop the service first if it's running (ignore errors)
     if crate::service::is_service_running() {
         eprintln!("Stopping service before uninstallation...");
         let _ = stop_service(); // Continue even if stop fails
@@ -249,10 +246,14 @@ fn uninstall_service() -> crate::Result<()> {
     
     let plist_path = get_plist_path()?;
     
-    // Remove plist file
-    with_context(std::fs::remove_file(&plist_path), "Failed to remove plist file")?;
+    // Remove plist file if it exists (ignore if doesn't exist)
+    if std::path::Path::new(&plist_path).exists() {
+        with_context(std::fs::remove_file(&plist_path), "Failed to remove plist file")?;
+        eprintln!("Service uninstalled successfully");
+    } else {
+        eprintln!("Service plist not found (already uninstalled)");
+    }
     
-    eprintln!("Service uninstalled successfully");
     Ok(())
 }
 
