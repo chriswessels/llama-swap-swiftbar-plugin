@@ -7,7 +7,6 @@ pub enum NotReadyReason {
     PlistMissing,
 }
 
-
 /// Simplified agent states
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AgentState {
@@ -18,16 +17,25 @@ pub enum AgentState {
 }
 
 impl AgentState {
-    pub fn from_system_check(plist_installed: bool, binary_available: bool, service_running: bool) -> Self {
+    pub fn from_system_check(
+        plist_installed: bool,
+        binary_available: bool,
+        service_running: bool,
+    ) -> Self {
         match (plist_installed, binary_available, service_running) {
             (_, _, true) => AgentState::Running,
-            (true, true, false) => AgentState::Stopped,  // Ready to start
-            (false, false, _) => AgentState::NotReady { reason: NotReadyReason::BinaryNotFound },
-            (false, true, _) => AgentState::NotReady { reason: NotReadyReason::PlistMissing },
-            (true, false, _) => AgentState::NotReady { reason: NotReadyReason::BinaryNotFound }, // Fix: plist exists but binary missing
+            (true, true, false) => AgentState::Stopped, // Ready to start
+            (false, false, _) => AgentState::NotReady {
+                reason: NotReadyReason::BinaryNotFound,
+            },
+            (false, true, _) => AgentState::NotReady {
+                reason: NotReadyReason::PlistMissing,
+            },
+            (true, false, _) => AgentState::NotReady {
+                reason: NotReadyReason::BinaryNotFound,
+            }, // Fix: plist exists but binary missing
         }
     }
-    
 }
 
 /// Display state computed from agent and model states
@@ -35,8 +43,8 @@ impl AgentState {
 pub enum DisplayState {
     AgentNotLoaded,
     AgentStarting,
-    ServiceStopped,        // Service stopped but ready to start
-    ServiceLoadedNoModel,  // Service running but no models
+    ServiceStopped,       // Service stopped but ready to start
+    ServiceLoadedNoModel, // Service running but no models
     ModelLoading,
     ModelProcessingQueue,
     ModelReady,
@@ -57,12 +65,12 @@ impl DisplayState {
 
     pub fn icon_color(&self) -> &'static str {
         match self {
-            DisplayState::AgentNotLoaded => "red",        // Problems - missing requirements
-            DisplayState::ServiceStopped => "red",        // Problems - service needs to be started
+            DisplayState::AgentNotLoaded => "red", // Problems - missing requirements
+            DisplayState::ServiceStopped => "red", // Problems - service needs to be started
             DisplayState::ServiceLoadedNoModel => "grey", // Idle - service running but no models
-            DisplayState::AgentStarting => "yellow",      // Transitional - starting up
-            DisplayState::ModelLoading => "yellow",       // Transitional - loading model
-            DisplayState::ModelReady => "green",          // Ready - models loaded and idle
+            DisplayState::AgentStarting => "yellow", // Transitional - starting up
+            DisplayState::ModelLoading => "yellow", // Transitional - loading model
+            DisplayState::ModelReady => "green",   // Ready - models loaded and idle
             DisplayState::ModelProcessingQueue => "blue", // Active - processing requests
         }
     }
@@ -71,8 +79,8 @@ impl DisplayState {
 /// Simplified polling mode
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PollingMode {
-    Idle,    // 3s - no activity
-    Active,  // 1s - active processing
+    Idle,   // 3s - no activity
+    Active, // 1s - active processing
 }
 
 impl PollingMode {
@@ -82,14 +90,14 @@ impl PollingMode {
             PollingMode::Active => Duration::from_secs(1),
         }
     }
-    
+
     pub fn description(&self) -> &'static str {
         match self {
             PollingMode::Idle => "Idle",
-            PollingMode::Active => "Active", 
+            PollingMode::Active => "Active",
         }
     }
-    
+
     /// Determine polling mode based on state changes and activity
     pub fn compute(
         _current: PollingMode,
@@ -98,12 +106,16 @@ impl PollingMode {
         last_change_elapsed: Duration,
     ) -> PollingMode {
         const STATE_CHANGE_DURATION: Duration = Duration::from_secs(5);
-        
-        match (state_changed, has_activity, last_change_elapsed < STATE_CHANGE_DURATION) {
-            (true, _, _) => PollingMode::Active,  // Just changed
-            (_, _, true) => PollingMode::Active,   // Recently changed
-            (_, true, _) => PollingMode::Active,     // Has activity
-            _ => PollingMode::Idle,                  // No activity
+
+        match (
+            state_changed,
+            has_activity,
+            last_change_elapsed < STATE_CHANGE_DURATION,
+        ) {
+            (true, _, _) => PollingMode::Active, // Just changed
+            (_, _, true) => PollingMode::Active, // Recently changed
+            (_, true, _) => PollingMode::Active, // Has activity
+            _ => PollingMode::Idle,              // No activity
         }
     }
 }

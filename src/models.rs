@@ -57,25 +57,17 @@ pub struct Metrics {
     pub predicted_tokens_per_sec: f64,
     pub requests_processing: u32,
     pub requests_deferred: u32,
-    pub kv_cache_usage_ratio: f64,
-    pub kv_cache_tokens: u32,
     pub n_decode_total: u32,
     pub memory_mb: f64,
 }
 
-impl Metrics {    
-    pub fn kv_cache_percent(&self) -> f64 {
-        self.kv_cache_usage_ratio * 100.0
-    }
-    
+impl Metrics {
     pub fn queue_status(&self) -> String {
-        let total_requests = self.requests_processing + self.requests_deferred;
-        
-        match (total_requests, self.requests_deferred) {
-            (0, _) => "idle".to_string(),
-            (_, 0) if self.requests_processing == 1 => "busy".to_string(),
-            (_, 0) => format!("busy ({})", self.requests_processing),
-            _ => format!("queued ({total_requests})"),
+        match (self.requests_processing, self.requests_deferred) {
+            (0, 0) => "Idle".to_string(),
+            (n, 0) => format!("{} active", n),
+            (0, n) => format!("{} queued", n),
+            (p, q) => format!("{} active, {} queued", p, q),
         }
     }
 }
@@ -115,7 +107,7 @@ impl MetricStats {
                         } else {
                             format!("{}m {}s", minutes, seconds)
                         }
-                    },
+                    }
                     s => {
                         let hours = s / 3600;
                         let remaining_minutes = (s % 3600) / 60;
@@ -132,7 +124,6 @@ impl MetricStats {
     }
 }
 
-
 // Unified analysis operations
 pub struct DataAnalyzer;
 
@@ -141,21 +132,19 @@ impl DataAnalyzer {
         if data.is_empty() {
             return MetricStats::default();
         }
-        
+
         let values: Vec<f64> = data.iter().map(|tv| tv.value).collect();
         let sum: f64 = values.iter().sum();
         let count = values.len() as f64;
         let mean = sum / count;
         let current = data.back().unwrap().value;
-        
+
         let min = values.iter().fold(f64::INFINITY, |a, &b| a.min(b));
         let max = values.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
-        
-        let variance = values.iter()
-            .map(|&v| (v - mean).powi(2))
-            .sum::<f64>() / count;
+
+        let variance = values.iter().map(|&v| (v - mean).powi(2)).sum::<f64>() / count;
         let std_dev = variance.sqrt();
-        
+
         MetricStats {
             mean,
             min,
@@ -165,14 +154,19 @@ impl DataAnalyzer {
             current,
         }
     }
-        
-    pub fn push_value_to_deque(deque: &mut VecDeque<TimestampedValue>, value: f64, timestamp: u64, max_size: usize) {
+
+    pub fn push_value_to_deque(
+        deque: &mut VecDeque<TimestampedValue>,
+        value: f64,
+        timestamp: u64,
+        max_size: usize,
+    ) {
         deque.push_back(TimestampedValue { timestamp, value });
         while deque.len() > max_size {
             deque.pop_front();
         }
     }
-    
+
     pub fn trim_deque(deque: &mut VecDeque<TimestampedValue>, cutoff: u64) {
         while deque.front().is_some_and(|v| v.timestamp < cutoff) {
             deque.pop_front();
@@ -185,9 +179,8 @@ pub struct MetricsHistory {
     pub tps: VecDeque<TimestampedValue>,
     pub prompt_tps: VecDeque<TimestampedValue>,
     pub memory_mb: VecDeque<TimestampedValue>,
-    pub kv_cache_percent: VecDeque<TimestampedValue>,
-    pub kv_cache_tokens: VecDeque<TimestampedValue>,
-    
+    pub queue_size: VecDeque<TimestampedValue>,
+
     #[serde(skip)]
     pub max_size: usize,
 }
@@ -202,40 +195,57 @@ impl MetricsHistory {
     pub fn new() -> Self {
         Self::with_capacity(crate::constants::HISTORY_SIZE)
     }
-    
+
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             tps: VecDeque::with_capacity(capacity),
             prompt_tps: VecDeque::with_capacity(capacity),
             memory_mb: VecDeque::with_capacity(capacity),
-            kv_cache_percent: VecDeque::with_capacity(capacity),
-            kv_cache_tokens: VecDeque::with_capacity(capacity),
+            queue_size: VecDeque::with_capacity(capacity),
             max_size: capacity,
         }
     }
-    
+
     pub fn push(&mut self, metrics: &Metrics) {
         let timestamp = current_timestamp();
-        
-        DataAnalyzer::push_value_to_deque(&mut self.tps, metrics.predicted_tokens_per_sec, timestamp, self.max_size);
-        DataAnalyzer::push_value_to_deque(&mut self.prompt_tps, metrics.prompt_tokens_per_sec, timestamp, self.max_size);
-        DataAnalyzer::push_value_to_deque(&mut self.memory_mb, metrics.memory_mb, timestamp, self.max_size);
-        DataAnalyzer::push_value_to_deque(&mut self.kv_cache_percent, metrics.kv_cache_percent(), timestamp, self.max_size);
-        DataAnalyzer::push_value_to_deque(&mut self.kv_cache_tokens, metrics.kv_cache_tokens as f64, timestamp, self.max_size);
-        
+
+        DataAnalyzer::push_value_to_deque(
+            &mut self.tps,
+            metrics.predicted_tokens_per_sec,
+            timestamp,
+            self.max_size,
+        );
+        DataAnalyzer::push_value_to_deque(
+            &mut self.prompt_tps,
+            metrics.prompt_tokens_per_sec,
+            timestamp,
+            self.max_size,
+        );
+        DataAnalyzer::push_value_to_deque(
+            &mut self.memory_mb,
+            metrics.memory_mb,
+            timestamp,
+            self.max_size,
+        );
+        DataAnalyzer::push_value_to_deque(
+            &mut self.queue_size,
+            (metrics.requests_processing + metrics.requests_deferred) as f64,
+            timestamp,
+            self.max_size,
+        );
+
         self.trim_old_data();
     }
-    
+
     pub fn trim_old_data(&mut self) {
         let cutoff = current_timestamp().saturating_sub(305); // 5 minutes
-        
+
         DataAnalyzer::trim_deque(&mut self.tps, cutoff);
         DataAnalyzer::trim_deque(&mut self.prompt_tps, cutoff);
         DataAnalyzer::trim_deque(&mut self.memory_mb, cutoff);
-        DataAnalyzer::trim_deque(&mut self.kv_cache_percent, cutoff);
-        DataAnalyzer::trim_deque(&mut self.kv_cache_tokens, cutoff);
+        DataAnalyzer::trim_deque(&mut self.queue_size, cutoff);
     }
-    
+
     pub fn get_stats(&self, deque: &VecDeque<TimestampedValue>) -> MetricStats {
         DataAnalyzer::get_stats(deque)
     }
@@ -254,7 +264,7 @@ pub struct AllMetricsHistory {
     pub cpu_usage_percent: VecDeque<TimestampedValue>,
     pub memory_usage_percent: VecDeque<TimestampedValue>,
     pub used_memory_gb: VecDeque<TimestampedValue>,
-    
+
     #[serde(skip)]
     pub max_size: usize,
 }
@@ -269,7 +279,7 @@ impl AllMetricsHistory {
     pub fn new() -> Self {
         Self::with_capacity(crate::constants::HISTORY_SIZE)
     }
-    
+
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             models: std::collections::HashMap::new(),
@@ -280,54 +290,76 @@ impl AllMetricsHistory {
             max_size: capacity,
         }
     }
-    
+
     pub fn push(&mut self, all_metrics: &AllMetrics) {
         let timestamp = current_timestamp();
-        
-        DataAnalyzer::push_value_to_deque(&mut self.total_llama_memory_mb, all_metrics.total_llama_memory_mb, timestamp, self.max_size);
-        
+
+        DataAnalyzer::push_value_to_deque(
+            &mut self.total_llama_memory_mb,
+            all_metrics.total_llama_memory_mb,
+            timestamp,
+            self.max_size,
+        );
+
         let sys = &all_metrics.system_metrics;
-        DataAnalyzer::push_value_to_deque(&mut self.cpu_usage_percent, sys.cpu_usage_percent, timestamp, self.max_size);
-        DataAnalyzer::push_value_to_deque(&mut self.memory_usage_percent, sys.memory_usage_percent, timestamp, self.max_size);
-        DataAnalyzer::push_value_to_deque(&mut self.used_memory_gb, sys.used_memory_gb, timestamp, self.max_size);
-        
+        DataAnalyzer::push_value_to_deque(
+            &mut self.cpu_usage_percent,
+            sys.cpu_usage_percent,
+            timestamp,
+            self.max_size,
+        );
+        DataAnalyzer::push_value_to_deque(
+            &mut self.memory_usage_percent,
+            sys.memory_usage_percent,
+            timestamp,
+            self.max_size,
+        );
+        DataAnalyzer::push_value_to_deque(
+            &mut self.used_memory_gb,
+            sys.used_memory_gb,
+            timestamp,
+            self.max_size,
+        );
+
         for model_metrics in &all_metrics.models {
-            let history = self.models.entry(model_metrics.model_name.clone())
+            let history = self
+                .models
+                .entry(model_metrics.model_name.clone())
                 .or_insert_with(|| MetricsHistory::with_capacity(self.max_size));
             history.push(&model_metrics.metrics);
         }
-        
+
         self.trim_old_data();
     }
-    
+
     pub fn trim_old_data(&mut self) {
         let cutoff = current_timestamp().saturating_sub(300); // 5 minutes
-        
+
         DataAnalyzer::trim_deque(&mut self.total_llama_memory_mb, cutoff);
         DataAnalyzer::trim_deque(&mut self.cpu_usage_percent, cutoff);
         DataAnalyzer::trim_deque(&mut self.memory_usage_percent, cutoff);
         DataAnalyzer::trim_deque(&mut self.used_memory_gb, cutoff);
-        
+
         for (_, history) in self.models.iter_mut() {
             history.trim_old_data();
         }
-        
+
         self.models.retain(|_, history| !history.tps.is_empty());
     }
-    
+
     pub fn get_model_history(&self, model_name: &str) -> Option<&MetricsHistory> {
         self.models.get(model_name)
     }
-    
+
     // Unified stats methods using DataAnalyzer
     pub fn get_cpu_stats(&self) -> MetricStats {
         DataAnalyzer::get_stats(&self.cpu_usage_percent)
     }
-    
+
     pub fn get_system_memory_stats(&self) -> MetricStats {
         DataAnalyzer::get_stats(&self.memory_usage_percent)
     }
-    
+
     pub fn get_memory_stats(&self) -> MetricStats {
         DataAnalyzer::get_stats(&self.total_llama_memory_mb)
     }
