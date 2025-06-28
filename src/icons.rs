@@ -2,7 +2,7 @@ use image::{Rgba, RgbaImage, DynamicImage};
 use png::{BitDepth, ColorType, Encoder, PixelDimensions, Unit};
 use std::sync::OnceLock;
 
-use crate::models::ProgramState;
+use crate::state_machines::program::ProgramStates;
 use crate::constants::{STATUS_DOT_SIZE, STATUS_DOT_OFFSET, 
     COLOR_PROCESSING_QUEUE, COLOR_MODEL_READY, COLOR_MODEL_LOADING, 
     COLOR_SERVICE_NO_MODEL, COLOR_AGENT_STARTING, COLOR_AGENT_NOT_LOADED};
@@ -87,16 +87,16 @@ fn create_themed_status_icon(light_base: &RgbaImage, dark_base: &RgbaImage, colo
 }
 
 /// Get cached program state icon image
-pub fn get_program_state_icon(state: ProgramState) -> &'static bitbar::attr::Image {
+pub fn get_program_state_icon(state: ProgramStates) -> &'static bitbar::attr::Image {
     let cache = ICON_CACHE.get_or_init(init_icon_cache);
     
     match state {
-        ProgramState::ModelProcessingQueue => &cache.processing_queue,
-        ProgramState::ModelReady => &cache.model_ready,
-        ProgramState::ModelLoading => &cache.model_loading,
-        ProgramState::ServiceLoadedNoModel => &cache.service_no_model,
-        ProgramState::AgentStarting => &cache.agent_starting,
-        ProgramState::AgentNotLoaded => &cache.agent_not_loaded,
+        ProgramStates::ModelProcessingQueue => &cache.processing_queue,
+        ProgramStates::ModelReady => &cache.model_ready,
+        ProgramStates::ModelLoading => &cache.model_loading,
+        ProgramStates::ServiceLoadedNoModel => &cache.service_no_model,
+        ProgramStates::AgentStarting => &cache.agent_starting,
+        ProgramStates::AgentNotLoaded => &cache.agent_not_loaded,
     }
 }
 

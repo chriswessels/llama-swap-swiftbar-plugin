@@ -1,6 +1,8 @@
 use bitbar::{Menu, MenuItem, ContentItem, attr};
 use crate::{icons, charts};
-use crate::models::{AllMetricsHistory, AllMetrics, MetricsHistory, TimestampedValue, ProgramState, AgentState};
+use crate::models::{AllMetricsHistory, AllMetrics, MetricsHistory, TimestampedValue};
+use crate::state_machines::program::ProgramStates;
+use crate::state_machines::agent::AgentStates;
 use reqwest::blocking::Client;
 use std::collections::VecDeque;
 
@@ -9,8 +11,8 @@ pub struct PluginState {
     pub http_client: Client,
     pub metrics_history: AllMetricsHistory,
     pub current_all_metrics: Option<AllMetrics>,
-    pub current_program_state: ProgramState,
-    pub current_agent_state: AgentState,
+    pub current_program_state: ProgramStates,
+    pub current_agent_state: AgentStates,
     #[allow(dead_code)]
     pub error_count: usize,
 }
@@ -32,21 +34,22 @@ impl MenuBuilder {
         Self { items: Vec::new() }
     }
     
-    fn add_title(&mut self, program_state: ProgramState) {
+    fn add_title(&mut self, program_state: ProgramStates) {
         let icon = icons::get_program_state_icon(program_state);
         let item = ContentItem::new("").image(icon.clone()).unwrap();
         self.items.push(MenuItem::Content(item));
     }
     
-    fn add_status_message(&mut self, program_state: ProgramState) {
+    fn add_status_message(&mut self, program_state: ProgramStates) {
         let message = program_state.status_message();
-        let color = match program_state {
-            ProgramState::ModelProcessingQueue => "#007AFF", // blue
-            ProgramState::ModelReady => "#34C759",          // green
-            ProgramState::ModelLoading => "#FF9500",        // yellow
-            ProgramState::ServiceLoadedNoModel => "#8E8E93", // grey
-            ProgramState::AgentStarting => "#FF9500",       // yellow
-            ProgramState::AgentNotLoaded => "#FF3B30",      // red
+        let color = program_state.icon_color();
+        let color = match color {
+            "blue" => "#007AFF",
+            "green" => "#34C759", 
+            "yellow" => "#FF9500",
+            "grey" => "#8E8E93",
+            "red" => "#FF3B30",
+            _ => "#8E8E93", // default grey
         };
         
         let mut status_item = ContentItem::new(message);
@@ -177,7 +180,7 @@ impl MenuBuilder {
         self.items.push(MenuItem::Content(queue_item));
     }
     
-    fn add_settings_section(&mut self, program_state: ProgramState, has_models: bool) {
+    fn add_settings_section(&mut self, program_state: ProgramStates, has_models: bool) {
         let exe = std::env::current_exe().unwrap();
         let exe_str = exe.to_str().unwrap();
         
@@ -185,7 +188,7 @@ impl MenuBuilder {
         
         // Control actions based on program state
         match program_state {
-            ProgramState::ModelProcessingQueue | ProgramState::ModelReady | ProgramState::ServiceLoadedNoModel => {                
+            ProgramStates::ModelProcessingQueue | ProgramStates::ModelReady | ProgramStates::ServiceLoadedNoModel => {                
                 if has_models {
                     let mut unload = ContentItem::new(":eject: Unload Model(s)");
                     unload = unload.command(attr::Command::try_from((exe_str, "do_unload")).unwrap()).unwrap();
@@ -195,12 +198,12 @@ impl MenuBuilder {
                 item = item.command(attr::Command::try_from((exe_str, "do_stop")).unwrap()).unwrap();
                 submenu.push(MenuItem::Content(item));
             }
-            ProgramState::AgentNotLoaded | ProgramState::ModelLoading => {
+            ProgramStates::AgentNotLoaded | ProgramStates::ModelLoading => {
                 let mut item = ContentItem::new(":play.fill: Start Llama-Swap Service");
                 item = item.command(attr::Command::try_from((exe_str, "do_start")).unwrap()).unwrap();
                 submenu.push(MenuItem::Content(item));
             }
-            ProgramState::AgentStarting => {
+            ProgramStates::AgentStarting => {
                 // Show both start and stop options during transition
                 let mut start_item = ContentItem::new(":play.fill: Start Llama-Swap Service");
                 start_item = start_item.command(attr::Command::try_from((exe_str, "do_start")).unwrap()).unwrap();
@@ -477,9 +480,9 @@ pub fn build_menu(state: &PluginState) -> crate::Result<String> {
         .unwrap_or(false);
     
     if matches!(state.current_program_state, 
-        ProgramState::ModelProcessingQueue | 
-        ProgramState::ModelReady | 
-        ProgramState::ServiceLoadedNoModel) {
+        ProgramStates::ModelProcessingQueue | 
+        ProgramStates::ModelReady | 
+        ProgramStates::ServiceLoadedNoModel) {
         menu.add_system_metrics_section(&state.metrics_history);
         
         if let Some(ref all_metrics) = state.current_all_metrics {
@@ -526,7 +529,7 @@ mod tests {
     
     #[test]
     fn test_menu_with_running_service() {
-        let state = create_test_state(ProgramState::ModelReady);
+        let state = create_test_state(ProgramStates::ModelReady);
         let menu_str = build_menu(&state).unwrap();
         
         assert!(menu_str.contains("Stop Llama-Swap Service"));
@@ -535,7 +538,7 @@ mod tests {
     
     #[test]
     fn test_menu_with_stopped_service() {
-        let state = create_test_state(ProgramState::AgentNotLoaded);
+        let state = create_test_state(ProgramStates::AgentNotLoaded);
         let menu_str = build_menu(&state).unwrap();
         
         assert!(menu_str.contains("Start Llama-Swap Service"));
@@ -552,11 +555,11 @@ mod tests {
     }
     
     
-    fn create_test_state(program_state: ProgramState) -> PluginState {
+    fn create_test_state(program_state: ProgramStates) -> PluginState {
         PluginState {
             http_client: reqwest::blocking::Client::new(),
             current_program_state: program_state,
-            current_agent_state: AgentState::Running,
+            current_agent_state: AgentStates::Running,
             metrics_history: AllMetricsHistory::new(),
             current_all_metrics: None,
             error_count: 0,

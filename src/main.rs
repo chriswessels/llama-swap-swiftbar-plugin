@@ -6,9 +6,15 @@ mod charts;
 mod icons;
 mod commands;
 mod service;
+mod state_machines;
 
-use crate::models::{AllMetricsHistory, AllMetrics, ProgramState, AgentState};
+use crate::models::{AllMetricsHistory, AllMetrics};
+use crate::state_machines::agent::{AgentStateMachine, AgentStates, AgentEvents, AgentContext, ServiceRunning};
+use crate::state_machines::model::{ModelStateMachine, ModelEvents, ModelContext, ModelLoading, ModelActive};
+use crate::state_machines::polling_mode::{PollingModeStateMachine, PollingModeEvents, PollingModeContext, StateChange, QueueActivity};
+use crate::state_machines::program::{ProgramStateMachine, ProgramStates, ProgramEvents, ProgramContext, AgentUpdate, ModelUpdate};
 use reqwest::blocking::Client;
+use std::collections::HashMap;
 use std::error::Error;
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -18,43 +24,22 @@ use std::time::{Duration, Instant};
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum PollingMode {
-    Idle,
-    Active,
-    Starting,
-}
-
-impl PollingMode {
-    pub fn interval_secs(&self) -> u64 {
-        match self {
-            PollingMode::Idle => constants::UPDATE_INTERVAL_SECS,
-            PollingMode::Active => constants::ACTIVE_INTERVAL_SECS,
-            PollingMode::Starting => constants::STARTING_INTERVAL_SECS,
-        }
-    }
-    
-    pub fn description(&self) -> &'static str {
-        match self {
-            PollingMode::Idle => "idle polling",
-            PollingMode::Active => "active polling",
-            PollingMode::Starting => "transition polling",
-        }
-    }
-}
 
 pub struct PluginState {
     pub http_client: Client,
     pub metrics_history: AllMetricsHistory,
-    pub current_program_state: ProgramState,
-    pub current_agent_state: AgentState,
     pub current_all_metrics: Option<AllMetrics>,
     pub error_count: usize,
-    pub polling_mode: PollingMode,
-    pub last_program_state: ProgramState,
-    pub last_agent_state: AgentState,
-    pub mode_change_time: Instant,
-    pub agent_state_change_time: Instant,
+    
+    // State machines
+    pub agent_state_machine: AgentStateMachine<AgentContext>,
+    pub polling_mode_state_machine: PollingModeStateMachine<PollingModeContext>,
+    pub program_state_machine: ProgramStateMachine<ProgramContext>,
+    pub model_state_machines: HashMap<String, ModelStateMachine<ModelContext>>,
+    
+    // Previous states for change detection
+    pub last_program_state: ProgramStates,
+    pub last_agent_state: AgentStates,
 }
 
 impl PluginState {
@@ -63,60 +48,53 @@ impl PluginState {
             .timeout(Duration::from_secs(constants::API_TIMEOUT_SECS))
             .build()?;
 
+        let agent_context = AgentContext::new();
+        let polling_mode_context = PollingModeContext::new();
+        let program_context = ProgramContext::new();
+        
+        let agent_state_machine = AgentStateMachine::new(agent_context);
+        let polling_mode_state_machine = PollingModeStateMachine::new(polling_mode_context);
+        let program_state_machine = ProgramStateMachine::new(program_context);
+
         Ok(Self {
             http_client,
             metrics_history: AllMetricsHistory::new(),
-            current_program_state: ProgramState::AgentNotLoaded,
-            current_agent_state: AgentState::NotInstalled,
             current_all_metrics: None,
             error_count: 0,
-            polling_mode: PollingMode::Starting,
-            last_program_state: ProgramState::AgentNotLoaded,
-            last_agent_state: AgentState::NotInstalled,
-            mode_change_time: Instant::now(),
-            agent_state_change_time: Instant::now(),
+            agent_state_machine,
+            polling_mode_state_machine,
+            program_state_machine,
+            model_state_machines: HashMap::new(),
+            last_program_state: ProgramStates::AgentNotLoaded,
+            last_agent_state: AgentStates::NotInstalled,
         })
     }
     
     fn update_polling_mode(&mut self) {
-        let new_mode = self.determine_polling_mode();
+        let old_state = self.polling_mode_state_machine.state().clone();
         
-        if new_mode != self.polling_mode {
+        // Check for state changes that should trigger polling mode updates
+        let current_program_state = self.program_state_machine.state().clone();
+        let current_agent_state = self.agent_state_machine.state().clone();
+        
+        if current_program_state != self.last_program_state || current_agent_state != self.last_agent_state {
+            let _ = self.polling_mode_state_machine.process_event(PollingModeEvents::StateChangeDetected(StateChange));
+        }
+        
+        // Check for queue activity
+        let has_activity = self.has_queue_activity();
+        let _ = self.polling_mode_state_machine.process_event(PollingModeEvents::ActivityCheck(QueueActivity(has_activity)));
+        
+        let new_state = self.polling_mode_state_machine.state().clone();
+        if new_state != old_state {
             eprintln!("Polling mode: {} -> {} ({})", 
-                self.polling_mode.description(),
-                new_mode.description(),
+                old_state.description(),
+                new_state.description(),
                 self.get_mode_reason()
             );
-            
-            self.polling_mode = new_mode;
-            self.mode_change_time = Instant::now();
         }
     }
     
-    fn determine_polling_mode(&self) -> PollingMode {
-        // State transition takes priority
-        if self.current_program_state != self.last_program_state {
-            return PollingMode::Starting;
-        }
-        
-        // Stay in Starting mode for minimum duration
-        if self.polling_mode == PollingMode::Starting && 
-           self.mode_change_time.elapsed() < Duration::from_secs(constants::MIN_STARTING_DURATION_SECS) {
-            return PollingMode::Starting;
-        }
-        
-        // Check for active processing
-        if self.has_queue_activity() {
-            return PollingMode::Active;
-        }
-        
-        // Default based on service status
-        match self.current_program_state {
-            ProgramState::ModelReady | ProgramState::ServiceLoadedNoModel => PollingMode::Idle,
-            ProgramState::ModelProcessingQueue => PollingMode::Active,
-            _ => PollingMode::Starting,
-        }
-    }
     
     fn has_queue_activity(&self) -> bool {
         self.current_all_metrics
@@ -129,8 +107,9 @@ impl PluginState {
     }
     
     fn get_mode_reason(&self) -> String {
-        if self.current_program_state != self.last_program_state {
-            return format!("program state changed: {:?} -> {:?}", self.last_program_state, self.current_program_state);
+        let current_program_state = self.program_state_machine.state().clone();
+        if current_program_state != self.last_program_state {
+            return format!("program state changed: {:?} -> {:?}", self.last_program_state, current_program_state);
         }
         
         if let Some(ref all_metrics) = self.current_all_metrics {
@@ -152,8 +131,8 @@ impl PluginState {
     }
     
     fn update_state(&mut self) {
-        self.last_program_state = self.current_program_state;
-        self.last_agent_state = self.current_agent_state;
+        self.last_program_state = self.program_state_machine.state().clone();
+        self.last_agent_state = self.agent_state_machine.state().clone();
         
         // Update agent state with proper transitions
         self.update_agent_state();
@@ -169,44 +148,21 @@ impl PluginState {
     
     fn update_agent_state(&mut self) {
         let is_service_running = service::is_service_running(service::DetectionMethod::LaunchctlList);
+        let old_state = self.agent_state_machine.state().clone();
         
-        let new_agent_state = match (self.current_agent_state, is_service_running) {
-            // Agent was not installed, now service is running
-            (AgentState::NotInstalled, true) => AgentState::Starting,
-            
-            // Agent was not installed, still not running
-            (AgentState::NotInstalled, false) => AgentState::NotInstalled,
-            
-            // Agent was stopped, now service is running
-            (AgentState::Stopped, true) => AgentState::Starting,
-            
-            // Agent was stopped, still not running
-            (AgentState::Stopped, false) => AgentState::Stopped,
-            
-            // Agent was starting, service still running - check if we should transition to Running
-            (AgentState::Starting, true) => {
-                // After 5 seconds of starting, consider it running if service is up
-                if self.agent_state_change_time.elapsed() > Duration::from_secs(5) {
-                    AgentState::Running
-                } else {
-                    AgentState::Starting
-                }
-            },
-            
-            // Agent was starting but service stopped
-            (AgentState::Starting, false) => AgentState::Stopped,
-            
-            // Agent was running, service still up
-            (AgentState::Running, true) => AgentState::Running,
-            
-            // Agent was running but service stopped
-            (AgentState::Running, false) => AgentState::Stopped,
-        };
+        // Send service detection event to state machine
+        let _ = self.agent_state_machine.process_event(AgentEvents::ServiceDetected(ServiceRunning(is_service_running)));
         
-        if new_agent_state != self.current_agent_state {
-            eprintln!("Agent state: {:?} -> {:?}", self.current_agent_state, new_agent_state);
-            self.current_agent_state = new_agent_state;
-            self.agent_state_change_time = Instant::now();
+        // Check if we need to complete startup after timeout
+        if let AgentStates::Starting = self.agent_state_machine.state() {
+            if self.agent_state_machine.context().should_complete_startup() {
+                let _ = self.agent_state_machine.process_event(AgentEvents::StartupComplete(crate::state_machines::agent::StartupTimeout));
+            }
+        }
+        
+        let new_state = self.agent_state_machine.state().clone();
+        if new_state != old_state {
+            eprintln!("Agent state: {:?} -> {:?}", old_state, new_state);
         }
     }
     
@@ -215,23 +171,33 @@ impl PluginState {
         self.current_all_metrics = Some(all_metrics.clone());
         self.error_count = 0;
         
-        // Determine program state based on agent state and metrics
-        self.current_program_state = self.determine_program_state_from_agent_and_models(&all_metrics);
+        // Update model state machines
+        self.update_model_state_machines(&all_metrics);
+        
+        // Update program state machine with agent and model updates
+        self.update_program_state_machine(&all_metrics);
     }
     
     fn handle_metrics_error(&mut self, error: Box<dyn Error>) {
         eprintln!("Metrics fetch failed: {}", error);
         self.error_count += 1;
         
-        // Set program state based on agent state when metrics fail
-        self.current_program_state = match self.current_agent_state {
-            AgentState::Running => ProgramState::ServiceLoadedNoModel,
-            AgentState::Starting => ProgramState::AgentStarting,
-            AgentState::Stopped => ProgramState::AgentNotLoaded,
-            AgentState::NotInstalled => ProgramState::AgentNotLoaded,
-        };
+        // Clear model state machines on error
+        self.model_state_machines.clear();
         
-        if !matches!(self.current_agent_state, AgentState::Running) {
+        // Update program state machine with agent state only (no models)
+        let agent_state = self.agent_state_machine.state().clone();
+        let _ = self.program_state_machine.process_event(ProgramEvents::AgentStateChanged(AgentUpdate(agent_state)));
+        
+        // Update with empty model state
+        let model_update = ModelUpdate {
+            has_models: false,
+            has_loading: false,
+            has_activity: false,
+        };
+        let _ = self.program_state_machine.process_event(ProgramEvents::ModelStateChanged(model_update));
+        
+        if !matches!(self.agent_state_machine.state(), AgentStates::Running) {
             self.current_all_metrics = None;
             self.metrics_history.clear();
         } else {
@@ -239,37 +205,43 @@ impl PluginState {
         }
     }
     
-    fn determine_program_state_from_agent_and_models(&self, all_metrics: &AllMetrics) -> ProgramState {
-        // First check agent state
-        match self.current_agent_state {
-            AgentState::NotInstalled | AgentState::Stopped => ProgramState::AgentNotLoaded,
-            AgentState::Starting => ProgramState::AgentStarting,
-            AgentState::Running => {
-                // Agent is running, check model states
-                if all_metrics.models.is_empty() {
-                    ProgramState::ServiceLoadedNoModel
-                } else {
-                    // Check if any models are loading
-                    let has_loading_models = all_metrics.models.iter()
-                        .any(|m| m.model_state == crate::models::ModelState::Loading);
-                    
-                    if has_loading_models {
-                        ProgramState::ModelLoading
-                    } else {
-                        // Check for queue activity in running models
-                        let has_queue_activity = all_metrics.models.iter()
-                            .filter(|m| m.model_state == crate::models::ModelState::Running)
-                            .any(|m| m.metrics.requests_processing > 0 || m.metrics.requests_deferred > 0);
-                        
-                        if has_queue_activity {
-                            ProgramState::ModelProcessingQueue
-                        } else {
-                            ProgramState::ModelReady
-                        }
-                    }
-                }
-            }
+    fn update_model_state_machines(&mut self, all_metrics: &AllMetrics) {
+        // Remove models that no longer exist
+        let current_model_names: std::collections::HashSet<String> = all_metrics.models.iter().map(|m| m.model_name.clone()).collect();
+        self.model_state_machines.retain(|name, _| current_model_names.contains(name));
+        
+        // Update or create state machines for each model
+        for model_data in &all_metrics.models {
+            let state_machine = self.model_state_machines.entry(model_data.model_name.clone())
+                .or_insert_with(|| ModelStateMachine::new(ModelContext::new()));
+            
+            // Update with loading status
+            let is_loading = model_data.model_state == crate::models::ModelState::Loading;
+            let _ = state_machine.process_event(ModelEvents::LoadingUpdate(ModelLoading(is_loading)));
+            
+            // Update with active status
+            let is_active = model_data.model_state == crate::models::ModelState::Running;
+            let _ = state_machine.process_event(ModelEvents::ActiveUpdate(ModelActive(is_active)));
         }
+    }
+    
+    fn update_program_state_machine(&mut self, all_metrics: &AllMetrics) {
+        // Update with agent state
+        let agent_state = self.agent_state_machine.state().clone();
+        let _ = self.program_state_machine.process_event(ProgramEvents::AgentStateChanged(AgentUpdate(agent_state)));
+        
+        // Determine model summary
+        let has_models = !all_metrics.models.is_empty();
+        let has_loading = self.model_state_machines.values().any(|sm| sm.state().is_loading());
+        let has_activity = self.has_queue_activity();
+        
+        let model_update = ModelUpdate {
+            has_models,
+            has_loading,
+            has_activity,
+        };
+        
+        let _ = self.program_state_machine.process_event(ProgramEvents::ModelStateChanged(model_update));
     }
 }
 
@@ -325,7 +297,7 @@ fn run_streaming_mode() -> Result<()> {
         print!("~~~\n{}", frame);
         io::stdout().flush()?;
         
-        let sleep_duration = Duration::from_secs(state.polling_mode.interval_secs());
+        let sleep_duration = Duration::from_secs(state.polling_mode_state_machine.state().interval_secs());
         adaptive_sleep(sleep_duration, &running);
         
         log_slow_iteration(loop_start, &state);
@@ -348,8 +320,8 @@ fn render_frame(state: &mut PluginState) -> Result<String> {
     let menu_state = menu::PluginState {
         http_client: state.http_client.clone(),
         metrics_history: state.metrics_history.clone(),
-        current_program_state: state.current_program_state,
-        current_agent_state: state.current_agent_state,
+        current_program_state: state.program_state_machine.state().clone(),
+        current_agent_state: state.agent_state_machine.state().clone(),
         current_all_metrics: state.current_all_metrics.clone(),
         error_count: state.error_count,
     };
@@ -390,7 +362,7 @@ fn log_slow_iteration(loop_start: Instant, state: &PluginState) {
         let loop_duration = loop_start.elapsed();
         if loop_duration > Duration::from_millis(500) {
             eprintln!("Slow loop iteration: {:?} (mode: {})", 
-                loop_duration, state.polling_mode.description());
+                loop_duration, state.polling_mode_state_machine.state().description());
         }
     }
 }
