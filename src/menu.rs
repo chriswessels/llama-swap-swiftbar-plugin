@@ -294,7 +294,8 @@ impl MenuBuilder {
         self.items.push(MenuItem::Content(queue_item));
     }
     
-    fn add_settings_section(&mut self, program_state: ProgramStates, has_models: bool) {
+    
+    fn add_settings_section(&mut self, program_state: ProgramStates, has_models: bool, state: &PluginState) {
         let exe = std::env::current_exe().unwrap();
         let exe_str = exe.to_str().unwrap();
         
@@ -330,10 +331,63 @@ impl MenuBuilder {
         
         submenu.push(MenuItem::Sep);
         submenu.push(MenuItem::Content(create_colored_item("Llama-Swap Swiftbar Plugin", "#666666")));
+        
         // Debug actions
         if cfg!(debug_assertions) {
             let refresh_item = ContentItem::new(":arrow.clockwise: Force Plugin Refresh").refresh();
             submenu.push(MenuItem::Content(refresh_item));
+            
+            // Add debug state info after refresh item
+            let mut debug_submenu = Vec::new();
+            
+            // Agent state machine
+            debug_submenu.push(MenuItem::Content(
+                ContentItem::new(format!("Agent: {:?}", state.agent_state_machine.state()))
+            ));
+            
+            // Program state machine
+            debug_submenu.push(MenuItem::Content(
+                ContentItem::new(format!("Program: {:?}", state.program_state_machine.state()))
+            ));
+            
+            // Polling mode state machine
+            debug_submenu.push(MenuItem::Content(
+                ContentItem::new(format!("Polling: {:?}", state.polling_mode_state_machine.state()))
+            ));
+            
+            // Model state machines
+            if !state.model_state_machines.is_empty() {
+                debug_submenu.push(MenuItem::Sep);
+                debug_submenu.push(MenuItem::Content(
+                    ContentItem::new("Model States:")
+                ));
+                
+                for (model_name, state_machine) in &state.model_state_machines {
+                    debug_submenu.push(MenuItem::Content(
+                        ContentItem::new(format!("  {}: {:?}", model_name, state_machine.state()))
+                    ));
+                }
+            }
+            
+            // Error count and metrics info
+            debug_submenu.push(MenuItem::Sep);
+            debug_submenu.push(MenuItem::Content(
+                ContentItem::new(format!("Error Count: {}", state.error_count))
+            ));
+            
+            debug_submenu.push(MenuItem::Content(
+                ContentItem::new(format!("Has Metrics: {}", state.current_all_metrics.is_some()))
+            ));
+            
+            if let Some(ref metrics) = state.current_all_metrics {
+                debug_submenu.push(MenuItem::Content(
+                    ContentItem::new(format!("Models Loaded: {}", metrics.models.len()))
+                ));
+            }
+            
+            let debug_item = ContentItem::new(":ladybug: Debug State Info")
+                .sub(debug_submenu);
+            submenu.push(MenuItem::Content(debug_item));
         }
         
         let mut settings_item = ContentItem::new(":gearshape.fill: Advanced");
@@ -568,7 +622,7 @@ pub fn build_menu(state: &PluginState) -> crate::Result<String> {
     }
     
     menu.add_separator();
-    menu.add_settings_section(current_program_state, has_models);
+    menu.add_settings_section(current_program_state, has_models, state);
     
     let built_menu = menu.build();
     Ok(built_menu.to_string())
