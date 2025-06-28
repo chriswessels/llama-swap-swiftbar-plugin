@@ -1,4 +1,4 @@
-use bitbar::{Menu, MenuItem, ContentItem, attr};
+use bitbar::{Menu, MenuItem, ContentItem};
 use crate::{icons, charts};
 use crate::models::{AllMetricsHistory, MetricsHistory, TimestampedValue};
 use crate::state_machines::program::ProgramStates;
@@ -7,12 +7,126 @@ use std::collections::VecDeque;
 // Use the shared PluginState
 use crate::types::PluginState;
 
+/// Helper function to create colored menu items
+fn create_colored_item(text: &str, color: &str) -> ContentItem {
+    ContentItem::new(text).color(color).unwrap()
+}
+
+/// Helper function to create command menu items
+fn create_command_item(text: &str, exe_path: &str, action: &str) -> crate::Result<ContentItem> {
+    let command = bitbar::attr::Command::try_from((exe_path, action))?;
+    Ok(ContentItem::new(text).command(command)?)
+}
+
+/// Convert program state color names to hex codes
+fn get_hex_color(color: &str) -> &'static str {
+    match color {
+        "blue" => "#007AFF",
+        "green" => "#34C759", 
+        "yellow" => "#FF9500",
+        "grey" => "#8E8E93",
+        "red" => "#FF3B30",
+        _ => "#8E8E93", // default grey
+    }
+}
+
+/// Menu command configuration
+struct MenuCommand {
+    icon: &'static str,
+    label: &'static str,
+    action: &'static str,
+    states: &'static [ProgramStates],
+}
+
+/// Settings menu configuration
+static CONTROL_COMMANDS: &[MenuCommand] = &[
+    MenuCommand {
+        icon: ":eject:",
+        label: "Unload Model(s)",
+        action: "do_unload",
+        states: &[ProgramStates::ModelProcessingQueue, ProgramStates::ModelReady, ProgramStates::ServiceLoadedNoModel],
+    },
+    MenuCommand {
+        icon: ":stop.fill:",
+        label: "Stop Llama-Swap Service",
+        action: "do_stop",
+        states: &[ProgramStates::ModelProcessingQueue, ProgramStates::ModelReady, ProgramStates::ServiceLoadedNoModel, ProgramStates::AgentStarting],
+    },
+    MenuCommand {
+        icon: ":play.fill:",
+        label: "Start Llama-Swap Service",
+        action: "do_start",
+        states: &[ProgramStates::AgentNotLoaded, ProgramStates::ModelLoading, ProgramStates::AgentStarting],
+    },
+];
+
+static FILE_COMMANDS: &[MenuCommand] = &[
+    MenuCommand {
+        icon: ":doc.text.magnifyingglass:",
+        label: "View Llama-Swap Logs",
+        action: "view_logs",
+        states: &[], // Available in all states
+    },
+    MenuCommand {
+        icon: ":gearshape:",
+        label: "Edit Llama-Swap Configuration",
+        action: "view_config",
+        states: &[], // Available in all states
+    },
+];
+
+static RESTART_COMMAND: MenuCommand = MenuCommand {
+    icon: ":arrow.2.circlepath:",
+    label: "Restart Llama-Swap Service",
+    action: "do_restart",
+    states: &[], // Available in all states
+};
+
+impl MenuCommand {
+    fn is_available_for_state(&self, state: ProgramStates) -> bool {
+        self.states.is_empty() || self.states.contains(&state)
+    }
+    
+    fn create_item(&self, exe_path: &str) -> crate::Result<ContentItem> {
+        let text = format!("{} {}", self.icon, self.label);
+        create_command_item(&text, exe_path, self.action)
+    }
+}
+
 #[derive(Clone)]
 enum MetricDisplayType {
     Simple,
     SystemMemory,
     LlamaMemory,
     KvCache,
+}
+
+enum MetricHistory<'a> {
+    Model(&'a MetricsHistory),
+    System(&'a AllMetricsHistory, &'static str),
+}
+
+impl<'a> MetricHistory<'a> {
+    fn get_stats(&self, primary_data: &VecDeque<TimestampedValue>) -> crate::models::MetricStats {
+        match self {
+            MetricHistory::Model(history) => history.get_stats(primary_data),
+            MetricHistory::System(history, metric_name) => get_system_stats(metric_name, history),
+        }
+    }
+    
+    fn build_submenu(
+        &self,
+        insights: &crate::models::MetricStats,
+        primary_data: &VecDeque<TimestampedValue>,
+        secondary_data: Option<&VecDeque<TimestampedValue>>,
+        format_fn: fn(f64) -> String,
+        display_type: &MetricDisplayType,
+    ) -> Vec<MenuItem> {
+        match self {
+            MetricHistory::Model(history) => build_submenu(insights, primary_data, secondary_data, format_fn, display_type, Some(history), None),
+            MetricHistory::System(history, _) => build_submenu(insights, primary_data, secondary_data, format_fn, display_type, None, Some(history)),
+        }
+    }
 }
 
 struct MenuBuilder {
@@ -32,18 +146,8 @@ impl MenuBuilder {
     
     fn add_status_message(&mut self, program_state: ProgramStates) {
         let message = program_state.status_message();
-        let color = program_state.icon_color();
-        let color = match color {
-            "blue" => "#007AFF",
-            "green" => "#34C759", 
-            "yellow" => "#FF9500",
-            "grey" => "#8E8E93",
-            "red" => "#FF3B30",
-            _ => "#8E8E93", // default grey
-        };
-        
-        let mut status_item = ContentItem::new(message);
-        status_item = status_item.color(color).unwrap();
+        let color = get_hex_color(program_state.icon_color());
+        let status_item = create_colored_item(message, color);
         self.items.push(MenuItem::Content(status_item));
     }
 
@@ -52,8 +156,7 @@ impl MenuBuilder {
     }
     
     fn add_header(&mut self, title: &str) {
-        let mut header = ContentItem::new(title);
-        header = header.color("#666666").unwrap();
+        let header = create_colored_item(title, "#666666");
         self.items.push(MenuItem::Content(header));
     }
     
@@ -61,15 +164,15 @@ impl MenuBuilder {
     fn add_model_metrics_section(&mut self, model_name: &str, history: &MetricsHistory, current_metrics: &crate::models::Metrics) {
         self.add_header(model_name);
         
-        if let Some(item) = self.create_metric("Prompt Processing", &history.prompt_tps, None, charts::MetricType::Prompt, format_tps, MetricDisplayType::Simple, history) {
+        if let Some(item) = self.create_metric("Prompt Processing", &history.prompt_tps, None, charts::MetricType::Prompt, format_tps, MetricDisplayType::Simple, MetricHistory::Model(history)) {
             self.items.push(item);
         }
 
-        if let Some(item) = self.create_metric("Generation", &history.tps, None, charts::MetricType::Tps, format_tps, MetricDisplayType::Simple, history) {
+        if let Some(item) = self.create_metric("Generation", &history.tps, None, charts::MetricType::Tps, format_tps, MetricDisplayType::Simple, MetricHistory::Model(history)) {
             self.items.push(item);
         }
         
-        if let Some(item) = self.create_metric("KV Cache", &history.kv_cache_percent, Some(&history.kv_cache_tokens), charts::MetricType::KvCache, format_percent, MetricDisplayType::KvCache, history) {
+        if let Some(item) = self.create_metric("KV Cache", &history.kv_cache_percent, Some(&history.kv_cache_tokens), charts::MetricType::KvCache, format_percent, MetricDisplayType::KvCache, MetricHistory::Model(history)) {
             self.items.push(item);
         }
         
@@ -80,19 +183,19 @@ impl MenuBuilder {
         self.add_header("System Metrics");
         
         if !history.cpu_usage_percent.is_empty() {
-            if let Some(item) = self.create_system_metric("CPU", &history.cpu_usage_percent, None, charts::MetricType::Tps, format_percent, MetricDisplayType::Simple, history) {
+            if let Some(item) = self.create_metric("CPU", &history.cpu_usage_percent, None, charts::MetricType::Tps, format_percent, MetricDisplayType::Simple, MetricHistory::System(history, "CPU")) {
                 self.items.push(item);
             }
         }
         
         if !history.memory_usage_percent.is_empty() && !history.used_memory_gb.is_empty() {
-            if let Some(item) = self.create_system_metric("Memory", &history.memory_usage_percent, Some(&history.used_memory_gb), charts::MetricType::Memory, format_percent, MetricDisplayType::SystemMemory, history) {
+            if let Some(item) = self.create_metric("Memory", &history.memory_usage_percent, Some(&history.used_memory_gb), charts::MetricType::Memory, format_percent, MetricDisplayType::SystemMemory, MetricHistory::System(history, "Memory")) {
                 self.items.push(item);
             }
         }
         
         if !history.total_llama_memory_mb.is_empty() && !history.used_memory_gb.is_empty() {
-            if let Some(item) = self.create_system_metric("Llama Memory", &history.total_llama_memory_mb, Some(&history.used_memory_gb), charts::MetricType::Memory, format_memory, MetricDisplayType::LlamaMemory, history) {
+            if let Some(item) = self.create_metric("Llama Memory", &history.total_llama_memory_mb, Some(&history.used_memory_gb), charts::MetricType::Memory, format_memory, MetricDisplayType::LlamaMemory, MetricHistory::System(history, "Llama Memory")) {
                 self.items.push(item);
             }
         }
@@ -106,7 +209,7 @@ impl MenuBuilder {
         chart_type: charts::MetricType,
         format_fn: fn(f64) -> String,
         display_type: MetricDisplayType,
-        history: &MetricsHistory,
+        history: MetricHistory,
     ) -> Option<MenuItem> {
         if primary_data.is_empty() {
             return None;
@@ -117,32 +220,7 @@ impl MenuBuilder {
         let mut item = ContentItem::new(label);
         
         add_chart(&mut item, primary_data, chart_type);
-        let submenu = build_submenu(&insights, primary_data, secondary_data, format_fn, &display_type, Some(history), None);
-        item = item.sub(submenu);
-        
-        Some(MenuItem::Content(item))
-    }
-    
-    fn create_system_metric(
-        &self,
-        name: &str,
-        primary_data: &VecDeque<TimestampedValue>,
-        secondary_data: Option<&VecDeque<TimestampedValue>>,
-        chart_type: charts::MetricType,
-        format_fn: fn(f64) -> String,
-        display_type: MetricDisplayType,
-        history: &AllMetricsHistory,
-    ) -> Option<MenuItem> {
-        if primary_data.is_empty() {
-            return None;
-        }
-        
-        let insights = get_system_stats(name, history);
-        let label = build_label(name, &insights, secondary_data, format_fn, &display_type);
-        let mut item = ContentItem::new(label);
-        
-        add_chart(&mut item, primary_data, chart_type);
-        let submenu = build_submenu(&insights, primary_data, secondary_data, format_fn, &display_type, None, Some(history));
+        let submenu = history.build_submenu(&insights, primary_data, secondary_data, format_fn, &display_type);
         item = item.sub(submenu);
         
         Some(MenuItem::Content(item))
@@ -150,23 +228,20 @@ impl MenuBuilder {
     
     fn add_queue_status(&mut self, current_metrics: &crate::models::Metrics) {
         let queue_status = current_metrics.queue_status();
-        let mut queue_item = ContentItem::new(format!("Queue: {}", queue_status));
-        
         let color = if current_metrics.requests_processing > 0 || current_metrics.requests_deferred > 0 {
             "#FFA500"
         } else {
             "#666666"
         };
-        queue_item = queue_item.color(color).unwrap();
         
-        let submenu = vec![
-            MenuItem::Content(ContentItem::new(format!("Status: {}", queue_status))),
-            MenuItem::Content(ContentItem::new(format!("Processing: {} requests", current_metrics.requests_processing))),
-            MenuItem::Content(ContentItem::new(format!("Deferred: {} requests", current_metrics.requests_deferred))),
-            MenuItem::Content(ContentItem::new(format!("Decode Calls: {}", current_metrics.n_decode_total))),
-        ];
+        let queue_item = create_colored_item(&format!("Queue: {}", queue_status), color)
+            .sub(vec![
+                MenuItem::Content(ContentItem::new(format!("Status: {}", queue_status))),
+                MenuItem::Content(ContentItem::new(format!("Processing: {} requests", current_metrics.requests_processing))),
+                MenuItem::Content(ContentItem::new(format!("Deferred: {} requests", current_metrics.requests_deferred))),
+                MenuItem::Content(ContentItem::new(format!("Decode Calls: {}", current_metrics.n_decode_total))),
+            ]);
         
-        queue_item = queue_item.sub(submenu);
         self.items.push(MenuItem::Content(queue_item));
     }
     
@@ -176,52 +251,36 @@ impl MenuBuilder {
         
         let mut submenu = Vec::new();
         
-        // Control actions based on program state
-        match program_state {
-            ProgramStates::ModelProcessingQueue | ProgramStates::ModelReady | ProgramStates::ServiceLoadedNoModel => {                
-                if has_models {
-                    let mut unload = ContentItem::new(":eject: Unload Model(s)");
-                    unload = unload.command(attr::Command::try_from((exe_str, "do_unload")).unwrap()).unwrap();
-                    submenu.push(MenuItem::Content(unload));
+        // Add control commands based on current state
+        for command in CONTROL_COMMANDS {
+            if command.is_available_for_state(program_state) {
+                // Special handling for unload command - only show if models are present
+                if command.action == "do_unload" && !has_models {
+                    continue;
                 }
-                let mut item = ContentItem::new(":stop.fill: Stop Llama-Swap Service");
-                item = item.command(attr::Command::try_from((exe_str, "do_stop")).unwrap()).unwrap();
-                submenu.push(MenuItem::Content(item));
-            }
-            ProgramStates::AgentNotLoaded | ProgramStates::ModelLoading => {
-                let mut item = ContentItem::new(":play.fill: Start Llama-Swap Service");
-                item = item.command(attr::Command::try_from((exe_str, "do_start")).unwrap()).unwrap();
-                submenu.push(MenuItem::Content(item));
-            }
-            ProgramStates::AgentStarting => {
-                // Show both start and stop options during transition
-                let mut start_item = ContentItem::new(":play.fill: Start Llama-Swap Service");
-                start_item = start_item.command(attr::Command::try_from((exe_str, "do_start")).unwrap()).unwrap();
-                submenu.push(MenuItem::Content(start_item));
                 
-                let mut stop_item = ContentItem::new(":stop.fill: Stop Llama-Swap Service");
-                stop_item = stop_item.command(attr::Command::try_from((exe_str, "do_stop")).unwrap()).unwrap();
-                submenu.push(MenuItem::Content(stop_item));
+                if let Ok(item) = command.create_item(exe_str) {
+                    submenu.push(MenuItem::Content(item));
+                }
             }
         }
         
-        let mut restart = ContentItem::new(":arrow.2.circlepath: Restart Llama-Swap Service");
-        restart = restart.command(attr::Command::try_from((exe_str, "do_restart")).unwrap()).unwrap();
-        submenu.push(MenuItem::Content(restart));
+        // Always add restart command
+        if let Ok(item) = RESTART_COMMAND.create_item(exe_str) {
+            submenu.push(MenuItem::Content(item));
+        }
         
         submenu.push(MenuItem::Sep);
         
-        // File actions
-        let mut view_logs = ContentItem::new(":doc.text.magnifyingglass: View Llama-Swap Logs");
-        view_logs = view_logs.command(attr::Command::try_from((exe_str, "view_logs")).unwrap()).unwrap();
-        submenu.push(MenuItem::Content(view_logs));
-        
-        let mut edit_config = ContentItem::new(":gearshape: Edit Llama-Swap Configuration");
-        edit_config = edit_config.command(attr::Command::try_from((exe_str, "view_config")).unwrap()).unwrap();
-        submenu.push(MenuItem::Content(edit_config));
+        // Add file action commands
+        for command in FILE_COMMANDS {
+            if let Ok(item) = command.create_item(exe_str) {
+                submenu.push(MenuItem::Content(item));
+            }
+        }
         
         submenu.push(MenuItem::Sep);
-        submenu.push(MenuItem::Content(ContentItem::new("Llama-Swap Swiftbar Plugin").color("#666666").unwrap()));
+        submenu.push(MenuItem::Content(create_colored_item("Llama-Swap Swiftbar Plugin", "#666666")));
         // Debug actions
         if cfg!(debug_assertions) {
             let refresh_item = ContentItem::new(":arrow.clockwise: Force Plugin Refresh").refresh();
