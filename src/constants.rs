@@ -36,6 +36,7 @@ pub const COLOR_PROCESSING_QUEUE: (u8, u8, u8) = COLOR_BLUE;
 pub const COLOR_MODEL_READY: (u8, u8, u8) = COLOR_GREEN;
 pub const COLOR_MODEL_LOADING: (u8, u8, u8) = COLOR_YELLOW;
 pub const COLOR_SERVICE_NO_MODEL: (u8, u8, u8) = COLOR_GREY;
+pub const COLOR_SERVICE_STOPPED: (u8, u8, u8) = COLOR_RED;
 pub const COLOR_AGENT_STARTING: (u8, u8, u8) = COLOR_YELLOW;
 pub const COLOR_AGENT_NOT_LOADED: (u8, u8, u8) = COLOR_RED;
 

@@ -57,13 +57,13 @@ impl DisplayState {
 
     pub fn icon_color(&self) -> &'static str {
         match self {
-            DisplayState::AgentNotLoaded => "grey",
-            DisplayState::AgentStarting => "yellow",
-            DisplayState::ServiceStopped => "yellow",
-            DisplayState::ServiceLoadedNoModel => "yellow",
-            DisplayState::ModelLoading => "blue",
-            DisplayState::ModelProcessingQueue => "green",
-            DisplayState::ModelReady => "green",
+            DisplayState::AgentNotLoaded => "red",        // Problems - missing requirements
+            DisplayState::ServiceStopped => "red",        // Problems - service needs to be started
+            DisplayState::ServiceLoadedNoModel => "grey", // Idle - service running but no models
+            DisplayState::AgentStarting => "yellow",      // Transitional - starting up
+            DisplayState::ModelLoading => "yellow",       // Transitional - loading model
+            DisplayState::ModelReady => "green",          // Ready - models loaded and idle
+            DisplayState::ModelProcessingQueue => "blue", // Active - processing requests
         }
     }
 }

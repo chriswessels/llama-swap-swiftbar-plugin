@@ -4,7 +4,7 @@ use std::sync::OnceLock;
 
 use crate::constants::{STATUS_DOT_SIZE, STATUS_DOT_OFFSET, 
     COLOR_PROCESSING_QUEUE, COLOR_MODEL_READY, COLOR_MODEL_LOADING, 
-    COLOR_SERVICE_NO_MODEL, COLOR_AGENT_STARTING, COLOR_AGENT_NOT_LOADED};
+    COLOR_SERVICE_NO_MODEL, COLOR_SERVICE_STOPPED, COLOR_AGENT_STARTING, COLOR_AGENT_NOT_LOADED};
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 
@@ -23,6 +23,7 @@ struct IconCache {
     model_ready: bitbar::attr::Image,
     model_loading: bitbar::attr::Image,
     service_no_model: bitbar::attr::Image,
+    service_stopped: bitbar::attr::Image,
     agent_starting: bitbar::attr::Image,
     agent_not_loaded: bitbar::attr::Image,
 }
@@ -49,6 +50,8 @@ fn init_icon_cache() -> IconCache {
         .expect("Failed to create model loading icon");
     let service_no_model = create_themed_status_icon(&base_rgba_light, &base_rgba_dark, COLOR_SERVICE_NO_MODEL)
         .expect("Failed to create service no model icon");
+    let service_stopped = create_themed_status_icon(&base_rgba_light, &base_rgba_dark, COLOR_SERVICE_STOPPED)
+        .expect("Failed to create service stopped icon");
     let agent_starting = create_themed_status_icon(&base_rgba_light, &base_rgba_dark, COLOR_AGENT_STARTING)
         .expect("Failed to create agent starting icon");
     let agent_not_loaded = create_themed_status_icon(&base_rgba_light, &base_rgba_dark, COLOR_AGENT_NOT_LOADED)
@@ -59,6 +62,7 @@ fn init_icon_cache() -> IconCache {
         model_ready,
         model_loading,
         service_no_model,
+        service_stopped,
         agent_starting,
         agent_not_loaded,
     }
@@ -97,7 +101,7 @@ pub fn get_display_state_icon(state: crate::state_model::DisplayState) -> &'stat
         DisplayState::ModelReady => &cache.model_ready,
         DisplayState::ModelLoading => &cache.model_loading,
         DisplayState::ServiceLoadedNoModel => &cache.service_no_model,
-        DisplayState::ServiceStopped => &cache.service_no_model,  // Same icon as stopped service
+        DisplayState::ServiceStopped => &cache.service_stopped,
         DisplayState::AgentStarting => &cache.agent_starting,
         DisplayState::AgentNotLoaded => &cache.agent_not_loaded,
     }
