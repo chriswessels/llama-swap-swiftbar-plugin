@@ -1,7 +1,7 @@
 use bitbar::{Menu, MenuItem, ContentItem};
 use crate::{icons, charts};
 use crate::models::{AllMetricsHistory, MetricsHistory, TimestampedValue};
-use crate::state_machines::program::ProgramStates;
+use crate::state_model::DisplayState;
 use std::collections::VecDeque;
 
 // Use the shared PluginState
@@ -18,14 +18,13 @@ fn create_command_item(text: &str, exe_path: &str, action: &str) -> crate::Resul
     Ok(ContentItem::new(text).command(command)?)
 }
 
+
 /// Convert program state color names to hex codes
 fn get_hex_color(color: &str) -> &'static str {
     match color {
         "blue" => "#007AFF",
         "green" => "#34C759", 
         "yellow" => "#FF9500",
-        "grey" => "#8E8E93",
-        "red" => "#FF3B30",
         _ => "#8E8E93", // default grey
     }
 }
@@ -35,7 +34,7 @@ struct MenuCommand {
     icon: &'static str,
     label: &'static str,
     action: &'static str,
-    states: &'static [ProgramStates],
+    states: &'static [DisplayState],
 }
 
 /// Settings menu configuration
@@ -44,19 +43,19 @@ static CONTROL_COMMANDS: &[MenuCommand] = &[
         icon: ":eject:",
         label: "Unload Model(s)",
         action: "do_unload",
-        states: &[ProgramStates::ModelProcessingQueue, ProgramStates::ModelReady, ProgramStates::ServiceLoadedNoModel],
+        states: &[DisplayState::ModelProcessingQueue, DisplayState::ModelReady, DisplayState::ServiceLoadedNoModel],
     },
     MenuCommand {
         icon: ":stop.fill:",
         label: "Stop Llama-Swap Service",
         action: "do_stop",
-        states: &[ProgramStates::ModelProcessingQueue, ProgramStates::ModelReady, ProgramStates::ServiceLoadedNoModel, ProgramStates::AgentStarting],
+        states: &[DisplayState::ModelProcessingQueue, DisplayState::ModelReady, DisplayState::ServiceLoadedNoModel, DisplayState::AgentStarting],
     },
     MenuCommand {
         icon: ":play.fill:",
         label: "Start Llama-Swap Service",
         action: "do_start",
-        states: &[ProgramStates::AgentNotLoaded, ProgramStates::ModelLoading, ProgramStates::AgentStarting],
+        states: &[DisplayState::ModelLoading, DisplayState::AgentStarting],
     },
 ];
 
@@ -82,8 +81,22 @@ static RESTART_COMMAND: MenuCommand = MenuCommand {
     states: &[], // Available in all states
 };
 
+static INSTALL_COMMAND: MenuCommand = MenuCommand {
+    icon: ":arrow.down.doc:",
+    label: "Install Llama-Swap Service",
+    action: "do_install",
+    states: &[DisplayState::AgentNotLoaded], // Only when not installed
+};
+
+static UNINSTALL_COMMAND: MenuCommand = MenuCommand {
+    icon: ":trash:",
+    label: "Uninstall Llama-Swap Service",
+    action: "do_uninstall",
+    states: &[], // Available when installed (all states except AgentNotLoaded)
+};
+
 impl MenuCommand {
-    fn is_available_for_state(&self, state: ProgramStates) -> bool {
+    fn is_available_for_state(&self, state: DisplayState) -> bool {
         self.states.is_empty() || self.states.contains(&state)
     }
     
@@ -116,7 +129,7 @@ struct MetricConfig<'a> {
     history: MetricHistory<'a>,
 }
 
-impl<'a> MetricHistory<'a> {
+impl MetricHistory<'_> {
     fn get_stats(&self, primary_data: &VecDeque<TimestampedValue>) -> crate::models::MetricStats {
         match self {
             MetricHistory::Model(history) => history.get_stats(primary_data),
@@ -148,15 +161,15 @@ impl MenuBuilder {
         Self { items: Vec::new() }
     }
     
-    fn add_title(&mut self, program_state: ProgramStates) {
-        let icon = icons::get_program_state_icon(program_state);
+    fn add_title(&mut self, display_state: DisplayState) {
+        let icon = icons::get_display_state_icon(display_state);
         let item = ContentItem::new("").image(icon.clone()).unwrap();
         self.items.push(MenuItem::Content(item));
     }
     
-    fn add_status_message(&mut self, program_state: ProgramStates) {
-        let message = program_state.status_message();
-        let color = get_hex_color(program_state.icon_color());
+    fn add_status_message(&mut self, display_state: DisplayState) {
+        let message = display_state.status_message();
+        let color = get_hex_color(display_state.icon_color());
         let status_item = create_colored_item(message, color);
         self.items.push(MenuItem::Content(status_item));
     }
@@ -174,7 +187,7 @@ impl MenuBuilder {
     fn add_model_metrics_section(&mut self, model_name: &str, history: &MetricsHistory, current_metrics: &crate::models::Metrics) {
         self.add_header(model_name);
         
-        if let Some(item) = self.create_metric(MetricConfig {
+        if let Some(item) = Self::create_metric(&MetricConfig {
             name: "Prompt Processing",
             primary_data: &history.prompt_tps,
             secondary_data: None,
@@ -186,7 +199,7 @@ impl MenuBuilder {
             self.items.push(item);
         }
 
-        if let Some(item) = self.create_metric(MetricConfig {
+        if let Some(item) = Self::create_metric(&MetricConfig {
             name: "Generation",
             primary_data: &history.tps,
             secondary_data: None,
@@ -198,7 +211,7 @@ impl MenuBuilder {
             self.items.push(item);
         }
         
-        if let Some(item) = self.create_metric(MetricConfig {
+        if let Some(item) = Self::create_metric(&MetricConfig {
             name: "KV Cache",
             primary_data: &history.kv_cache_percent,
             secondary_data: Some(&history.kv_cache_tokens),
@@ -217,7 +230,7 @@ impl MenuBuilder {
         self.add_header("System Metrics");
         
         if !history.cpu_usage_percent.is_empty() {
-            if let Some(item) = self.create_metric(MetricConfig {
+            if let Some(item) = Self::create_metric(&MetricConfig {
                 name: "CPU",
                 primary_data: &history.cpu_usage_percent,
                 secondary_data: None,
@@ -231,7 +244,7 @@ impl MenuBuilder {
         }
         
         if !history.memory_usage_percent.is_empty() && !history.used_memory_gb.is_empty() {
-            if let Some(item) = self.create_metric(MetricConfig {
+            if let Some(item) = Self::create_metric(&MetricConfig {
                 name: "Memory",
                 primary_data: &history.memory_usage_percent,
                 secondary_data: Some(&history.used_memory_gb),
@@ -245,7 +258,7 @@ impl MenuBuilder {
         }
         
         if !history.total_llama_memory_mb.is_empty() && !history.used_memory_gb.is_empty() {
-            if let Some(item) = self.create_metric(MetricConfig {
+            if let Some(item) = Self::create_metric(&MetricConfig {
                 name: "Llama Memory",
                 primary_data: &history.total_llama_memory_mb,
                 secondary_data: Some(&history.used_memory_gb),
@@ -259,7 +272,7 @@ impl MenuBuilder {
         }
     }
     
-    fn create_metric(&self, config: MetricConfig) -> Option<MenuItem> {
+    fn create_metric(config: &MetricConfig) -> Option<MenuItem> {
         if config.primary_data.is_empty() {
             return None;
         }
@@ -295,29 +308,49 @@ impl MenuBuilder {
     }
     
     
-    fn add_settings_section(&mut self, program_state: ProgramStates, has_models: bool, state: &PluginState) {
+    fn add_settings_section(&mut self, display_state: DisplayState, has_models: bool, state: &PluginState) {
         let exe = std::env::current_exe().unwrap();
         let exe_str = exe.to_str().unwrap();
         
         let mut submenu = Vec::new();
+        let is_service_installed = crate::commands::is_service_installed().unwrap_or(false);
         
-        // Add control commands based on current state
-        for command in CONTROL_COMMANDS {
-            if command.is_available_for_state(program_state) {
-                // Special handling for unload command - only show if models are present
-                if command.action == "do_unload" && !has_models {
-                    continue;
+        // Show install option only when service is not installed
+        if matches!(display_state, DisplayState::AgentNotLoaded) && !is_service_installed {
+            if let Ok(item) = INSTALL_COMMAND.create_item(exe_str) {
+                submenu.push(MenuItem::Content(item));
+                submenu.push(MenuItem::Sep);
+            }
+            
+            // Show why installation might be needed
+            submenu.push(MenuItem::Content(ContentItem::new("Service not installed").color("#FF9500").unwrap()));
+            submenu.push(MenuItem::Sep);
+        } else {
+            // Add control commands based on current state (only when service is installed)
+            for command in CONTROL_COMMANDS {
+                if command.is_available_for_state(display_state) {
+                    // Special handling for unload command - only show if models are present
+                    if command.action == "do_unload" && !has_models {
+                        continue;
+                    }
+                    
+                    if let Ok(item) = command.create_item(exe_str) {
+                        submenu.push(MenuItem::Content(item));
+                    }
                 }
-                
-                if let Ok(item) = command.create_item(exe_str) {
+            }
+            
+            // Add restart command when service is installed
+            if let Ok(item) = RESTART_COMMAND.create_item(exe_str) {
+                submenu.push(MenuItem::Content(item));
+            }
+            
+            // Add uninstall option when service is installed  
+            if is_service_installed {
+                if let Ok(item) = UNINSTALL_COMMAND.create_item(exe_str) {
                     submenu.push(MenuItem::Content(item));
                 }
             }
-        }
-        
-        // Always add restart command
-        if let Ok(item) = RESTART_COMMAND.create_item(exe_str) {
-            submenu.push(MenuItem::Content(item));
         }
         
         submenu.push(MenuItem::Sep);
@@ -336,57 +369,33 @@ impl MenuBuilder {
         let refresh_item = ContentItem::new(":arrow.clockwise: Force Plugin Refresh").refresh();
         submenu.push(MenuItem::Content(refresh_item));
         
-        // Add debug state info after refresh item
-        let mut debug_submenu = Vec::new();
+        // Simplified debug info
+        submenu.push(MenuItem::Sep);
         
-        // Agent state machine
-        debug_submenu.push(MenuItem::Content(
-            ContentItem::new(format!("Agent: {:?}", state.agent_state_machine.state()))
-        ));
+        // System status and state in one line
+        let plist_installed = crate::commands::is_service_installed().unwrap_or(false);
+        let binary_available = crate::commands::find_llama_swap_binary().is_ok();
+        let service_running = crate::service::is_service_running();
         
-        // Program state machine
-        debug_submenu.push(MenuItem::Content(
-            ContentItem::new(format!("Program: {:?}", state.program_state_machine.state()))
-        ));
+        submenu.push(MenuItem::Content(ContentItem::new(format!("Status: {:?} | Plist: {} | Binary: {} | Service: {}", 
+            display_state,
+            if plist_installed { "✓" } else { "✗" },
+            if binary_available { "✓" } else { "✗" },
+            if service_running { "✓" } else { "✗" }
+        ))));
         
-        // Polling mode state machine
-        debug_submenu.push(MenuItem::Content(
-            ContentItem::new(format!("Polling: {:?}", state.polling_mode_state_machine.state()))
-        ));
+        submenu.push(MenuItem::Content(ContentItem::new(format!("Polling: {} | API Errors: {} | Metrics: {}", 
+            state.polling_mode.description(),
+            state.error_count, 
+            if state.current_all_metrics.is_some() { "Yes" } else { "No" }
+        ))));
         
-        // Model state machines
-        if !state.model_state_machines.is_empty() {
-            debug_submenu.push(MenuItem::Sep);
-            debug_submenu.push(MenuItem::Content(
-                ContentItem::new("Model States:")
-            ));
-            
-            for (model_name, state_machine) in &state.model_state_machines {
-                debug_submenu.push(MenuItem::Content(
-                    ContentItem::new(format!("  {}: {:?}", model_name, state_machine.state()))
-                ));
+        // Show model states if any
+        if !state.model_states.is_empty() {
+            for (model_name, model_state) in &state.model_states {
+                submenu.push(MenuItem::Content(ContentItem::new(format!("{model_name}: {model_state:?}"))));
             }
         }
-        
-        // Error count and metrics info
-        debug_submenu.push(MenuItem::Sep);
-        debug_submenu.push(MenuItem::Content(
-            ContentItem::new(format!("Error Count: {}", state.error_count))
-        ));
-        
-        debug_submenu.push(MenuItem::Content(
-            ContentItem::new(format!("Has Metrics: {}", state.current_all_metrics.is_some()))
-        ));
-        
-        if let Some(ref metrics) = state.current_all_metrics {
-            debug_submenu.push(MenuItem::Content(
-                ContentItem::new(format!("Models Loaded: {}", metrics.models.len()))
-            ));
-        }
-        
-        let debug_item = ContentItem::new(":ladybug: Debug State Info")
-            .sub(debug_submenu);
-        submenu.push(MenuItem::Content(debug_item));
         
         let mut settings_item = ContentItem::new(":gearshape.fill: Advanced");
         settings_item = settings_item.sub(submenu);
@@ -429,7 +438,7 @@ fn build_label(
 fn add_chart(item: &mut ContentItem, data: &VecDeque<TimestampedValue>, chart_type: charts::MetricType) {
     let values = data.iter().map(|tv| tv.value).collect();
     if let Ok(chart) = charts::generate_sparkline(&values, chart_type) {
-        if let Ok(chart_image) = icons::chart_to_menu_image(chart) {
+        if let Ok(chart_image) = icons::chart_to_menu_image(&chart) {
             // We need to replace the item content, not clone it
             let text = item.text.clone();
             *item = ContentItem::new(text).image(chart_image).unwrap();
@@ -483,7 +492,7 @@ fn build_submenu(
                 format!("Current: {gb_current:.2} GB ({memory_percent:.1}% of system)")
             }
         },
-        _ => format!("Current: {}", format_fn(insights.current)),
+        MetricDisplayType::Simple => format!("Current: {}", format_fn(insights.current)),
     };
     submenu.push(MenuItem::Content(ContentItem::new(current_text)));
     
@@ -523,7 +532,7 @@ fn build_submenu(
                     ContentItem::new(format!("System Total: {total_system_memory_gb:.1} GB"))
                 ));
             },
-            _ => {
+            MetricDisplayType::Simple => {
                 let stats = crate::models::DataAnalyzer::get_stats(primary_data);
                 submenu.push(MenuItem::Content(
                     ContentItem::new(format!("Average: {}", format_fn(stats.mean)))
@@ -589,22 +598,21 @@ fn format_percent(v: f64) -> String {
 pub fn build_menu(state: &PluginState) -> crate::Result<String> {
     let mut menu = MenuBuilder::new();
     
-    let current_program_state = *state.program_state_machine.state();
+    let display_state = state.get_display_state();
     
-    menu.add_title(current_program_state);
+    menu.add_title(display_state);
     menu.add_separator();
-    menu.add_status_message(current_program_state);
+    menu.add_status_message(display_state);
     menu.add_separator();
     
     let has_models = state.current_all_metrics
         .as_ref()
-        .map(|m| !m.models.is_empty())
-        .unwrap_or(false);
+        .is_some_and(|m| !m.models.is_empty());
     
-    if matches!(current_program_state, 
-        ProgramStates::ModelProcessingQueue | 
-        ProgramStates::ModelReady | 
-        ProgramStates::ServiceLoadedNoModel) {
+    if matches!(display_state, 
+        DisplayState::ModelProcessingQueue | 
+        DisplayState::ModelReady | 
+        DisplayState::ServiceLoadedNoModel) {
         menu.add_system_metrics_section(&state.metrics_history);
         
         if let Some(ref all_metrics) = state.current_all_metrics {
@@ -620,7 +628,7 @@ pub fn build_menu(state: &PluginState) -> crate::Result<String> {
     }
     
     menu.add_separator();
-    menu.add_settings_section(current_program_state, has_models, state);
+    menu.add_settings_section(display_state, has_models, state);
     
     let built_menu = menu.build();
     Ok(built_menu.to_string())
@@ -648,15 +656,14 @@ pub fn build_error_menu(message: &str) -> Result<String, std::fmt::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state_machines::agent::AgentStates;
-    
+    use crate::state_model::AgentState;
     #[test]
     fn test_menu_with_running_service() {
         let state = create_test_state_for_running_service();
         
-        // Verify the state machines are in the expected states
-        assert!(matches!(state.agent_state_machine.state(), AgentStates::Running));
-        assert!(matches!(state.program_state_machine.state(), ProgramStates::ModelReady));
+        // Verify the state is as expected
+        assert!(matches!(state.agent_state, AgentState::Running));
+        assert_eq!(state.get_display_state(), DisplayState::ModelReady);
         
         let menu_str = build_menu(&state).unwrap();
         
@@ -669,14 +676,14 @@ mod tests {
     fn test_menu_with_stopped_service() {
         let state = create_test_state_for_stopped_service();
         
-        // Verify the state machines are in the expected states
-        assert!(matches!(state.agent_state_machine.state(), AgentStates::NotInstalled));
-        assert!(matches!(state.program_state_machine.state(), ProgramStates::AgentNotLoaded));
+        // Verify the state is as expected
+        assert!(matches!(state.agent_state, AgentState::NotReady { .. }));
+        assert_eq!(state.get_display_state(), DisplayState::AgentNotLoaded);
         
         let menu_str = build_menu(&state).unwrap();
         
-        // When service is stopped, should show start options
-        assert!(menu_str.contains("Start Llama-Swap Service"));
+        // When service is not installed, should show install options
+        assert!(menu_str.contains("Install Llama-Swap Service"));
         assert!(!menu_str.contains("Stop Llama-Swap Service"));
     }
     
@@ -691,31 +698,18 @@ mod tests {
     
     
     fn create_test_state_for_running_service() -> PluginState {
-        use crate::state_machines::agent::{AgentEvents, ServiceRunning};
-        use crate::state_machines::program::{ProgramEvents, AgentUpdate, ModelUpdate};
         use crate::models::{AllMetrics, ModelMetrics, ModelState, Metrics};
+        use crate::state_model::{AgentState, ModelState as NewModelState};
         
         let mut state = PluginState::new().unwrap();
         
-        // Step 1: Drive agent state machine to Running state
-        // Simulate service being detected as running
-        let _ = state.agent_state_machine.process_event(AgentEvents::ServiceDetected(ServiceRunning(true)));
-        // Simulate startup timeout to transition to Running
-        let _ = state.agent_state_machine.process_event(AgentEvents::StartupComplete(crate::state_machines::agent::StartupTimeout));
+        // Set agent state to Running
+        state.agent_state = AgentState::Running;
         
-        // Step 2: Drive program state machine by feeding it the running agent state
-        let agent_state = *state.agent_state_machine.state();
-        let _ = state.program_state_machine.process_event(ProgramEvents::AgentStateChanged(AgentUpdate(agent_state)));
+        // Add a running model
+        state.model_states.insert("test-model".to_string(), NewModelState::Running);
         
-        // Step 3: Simulate having models loaded and ready (ModelReady state)
-        let model_update = ModelUpdate {
-            has_models: true,
-            has_loading: false,
-            has_activity: false,
-        };
-        let _ = state.program_state_machine.process_event(ProgramEvents::ModelStateChanged(model_update));
-        
-        // Step 4: Set up some dummy metrics to make the state consistent
+        // Set up some dummy metrics to make the state consistent
         let dummy_metrics = AllMetrics {
             models: vec![ModelMetrics {
                 model_name: "test-model".to_string(),
@@ -734,9 +728,7 @@ mod tests {
             total_llama_memory_mb: 1000.0,
             system_metrics: crate::models::SystemMetrics {
                 cpu_usage_percent: 25.0,
-                total_memory_gb: 16.0,
                 used_memory_gb: 8.0,
-                available_memory_gb: 8.0,
                 memory_usage_percent: 50.0,
             },
         };
@@ -746,26 +738,15 @@ mod tests {
     }
     
     fn create_test_state_for_stopped_service() -> PluginState {
-        use crate::state_machines::agent::{AgentEvents, ServiceRunning};
-        use crate::state_machines::program::{ProgramEvents, AgentUpdate, ModelUpdate};
+        use crate::state_model::{AgentState, NotReadyReason};
         
         let mut state = PluginState::new().unwrap();
         
-        // Step 1: Keep agent in stopped/not-installed state by not sending service running events
-        // The agent starts in NotInstalled state, and without ServiceDetected(true), it stays there
-        let _ = state.agent_state_machine.process_event(AgentEvents::ServiceDetected(ServiceRunning(false)));
+        // Set agent state to NotReady (simulating service not installed)
+        state.agent_state = AgentState::NotReady { reason: NotReadyReason::PlistMissing };
         
-        // Step 2: Drive program state machine with the stopped agent state
-        let agent_state = *state.agent_state_machine.state();
-        let _ = state.program_state_machine.process_event(ProgramEvents::AgentStateChanged(AgentUpdate(agent_state)));
-        
-        // Step 3: No models since service is not running
-        let model_update = ModelUpdate {
-            has_models: false,
-            has_loading: false,
-            has_activity: false,
-        };
-        let _ = state.program_state_machine.process_event(ProgramEvents::ModelStateChanged(model_update));
+        // No models since service is not running
+        state.model_states.clear();
         
         // No metrics since service is stopped
         state.current_all_metrics = None;

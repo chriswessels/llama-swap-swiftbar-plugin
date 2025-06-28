@@ -7,13 +7,7 @@ pub const API_PORT: u16 = 45786;
 pub const API_TIMEOUT_SECS: u64 = 1;
 
 // Update timing
-pub const UPDATE_INTERVAL_SECS: u64 = 5;     // Default/idle interval
-pub const ACTIVE_INTERVAL_SECS: u64 = 1;     // When processing requests
-pub const STARTING_INTERVAL_SECS: u64 = 2;   // During state transitions
 pub const STREAMING_MODE: bool = true;
-
-// Adaptive polling configuration
-pub const MIN_STARTING_DURATION_SECS: u64 = 10;  // Minimum time in Starting mode
 
 // Chart configuration
 pub const CHART_WIDTH: u32 = 60;

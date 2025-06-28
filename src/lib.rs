@@ -7,7 +7,7 @@ pub mod menu;
 pub mod metrics;
 pub mod models;
 pub mod service;
-pub mod state_machines;
+pub mod state_model;
 pub mod types;
 
 // Re-export error type is now in types module
@@ -17,17 +17,12 @@ pub use crate::models::{
     Metrics,
     MetricStats,
     MetricsHistory,
-    ProgramState,
-    AgentState,
     TimestampedValue,
 };
 
-// Re-export state machine types
-pub use crate::state_machines::{
-    agent::{AgentStates, AgentStateMachine},
-    program::{ProgramStates, ProgramStateMachine},
-    polling_mode::{PollingModeStates, PollingModeStateMachine},
-    model::{ModelStates, ModelStateMachine},
+// Re-export simplified state model types
+pub use crate::state_model::{
+    AgentState, DisplayState, PollingMode, ModelState, NotReadyReason,
 };
 
 // Re-export main types

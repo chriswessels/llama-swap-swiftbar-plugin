@@ -2,7 +2,6 @@ use image::{Rgba, RgbaImage, DynamicImage};
 use png::{BitDepth, ColorType, Encoder, PixelDimensions, Unit};
 use std::sync::OnceLock;
 
-use crate::state_machines::program::ProgramStates;
 use crate::constants::{STATUS_DOT_SIZE, STATUS_DOT_OFFSET, 
     COLOR_PROCESSING_QUEUE, COLOR_MODEL_READY, COLOR_MODEL_LOADING, 
     COLOR_SERVICE_NO_MODEL, COLOR_AGENT_STARTING, COLOR_AGENT_NOT_LOADED};
@@ -88,22 +87,23 @@ fn rgba_to_base64(rgba: &RgbaImage) -> crate::Result<String> {
     Ok(B64.encode(&buffer))
 }
 
-/// Get cached program state icon image
-pub fn get_program_state_icon(state: ProgramStates) -> &'static bitbar::attr::Image {
+/// Get cached display state icon image
+pub fn get_display_state_icon(state: crate::state_model::DisplayState) -> &'static bitbar::attr::Image {
+    use crate::state_model::DisplayState;
     let cache = ICON_CACHE.get_or_init(init_icon_cache);
     
     match state {
-        ProgramStates::ModelProcessingQueue => &cache.processing_queue,
-        ProgramStates::ModelReady => &cache.model_ready,
-        ProgramStates::ModelLoading => &cache.model_loading,
-        ProgramStates::ServiceLoadedNoModel => &cache.service_no_model,
-        ProgramStates::AgentStarting => &cache.agent_starting,
-        ProgramStates::AgentNotLoaded => &cache.agent_not_loaded,
+        DisplayState::ModelProcessingQueue => &cache.processing_queue,
+        DisplayState::ModelReady => &cache.model_ready,
+        DisplayState::ModelLoading => &cache.model_loading,
+        DisplayState::ServiceLoadedNoModel => &cache.service_no_model,
+        DisplayState::AgentStarting => &cache.agent_starting,
+        DisplayState::AgentNotLoaded => &cache.agent_not_loaded,
     }
 }
 
 /// Convert chart image to menu image (for charts only)
-pub fn chart_to_menu_image(chart: DynamicImage) -> crate::Result<bitbar::attr::Image> {
+pub fn chart_to_menu_image(chart: &DynamicImage) -> crate::Result<bitbar::attr::Image> {
     rgba_to_menu_image(&chart.to_rgba8())
 }
 

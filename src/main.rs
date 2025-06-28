@@ -6,7 +6,7 @@ mod charts;
 mod icons;
 mod commands;
 mod service;
-mod state_machines;
+mod state_model;
 mod types;
 
 // All imports are now handled in types.rs
@@ -76,7 +76,7 @@ fn run_streaming_mode() -> Result<()> {
         print!("~~~\n{frame}");
         io::stdout().flush()?;
         
-        let sleep_duration = Duration::from_secs(state.polling_mode_state_machine.state().interval_secs());
+        let sleep_duration = state.polling_mode.interval();
         adaptive_sleep(sleep_duration, &running);
         
         log_slow_iteration(loop_start, &state);
@@ -131,7 +131,7 @@ fn log_slow_iteration(loop_start: Instant, state: &PluginState) {
         let loop_duration = loop_start.elapsed();
         if loop_duration > Duration::from_millis(500) {
             eprintln!("Slow loop iteration: {:?} (mode: {})", 
-                loop_duration, state.polling_mode_state_machine.state().description());
+                loop_duration, state.polling_mode.description());
         }
     }
 }

@@ -1,5 +1,5 @@
 use image::{DynamicImage, Rgba, RgbaImage};
-use crate::constants::*;
+use crate::constants::{COLOR_TPS_LINE, COLOR_MEM_LINE, COLOR_PROMPT_LINE, COLOR_KV_CACHE_LINE, CHART_WIDTH, CHART_HEIGHT};
 use std::collections::VecDeque;
 
 #[derive(Clone, Copy)]
@@ -42,16 +42,16 @@ pub fn generate_sparkline_with_size(
         return Ok(DynamicImage::ImageRgba8(img));
     }
     
-    let data_vec: Vec<f64> = data.iter().cloned().collect();
+    let data_vec: Vec<f64> = data.iter().copied().collect();
     let (min_val, max_val) = calculate_bounds(&data_vec);
     let scale = if max_val > min_val {
-        (height - 1) as f64 / (max_val - min_val)
+        f64::from(height - 1) / (max_val - min_val)
     } else {
         0.0
     };
     
     let x_step = if data.len() > 1 {
-        width as f64 / (data.len() - 1) as f64
+        f64::from(width) / (data.len() - 1) as f64
     } else {
         0.0
     };
@@ -77,7 +77,7 @@ fn calculate_bounds(data: &[f64]) -> (f64, f64) {
         let padding = value.abs().max(1.0) * 0.5;
         (value - padding, value + padding)
     } else {
-        let center = (min + max) / 2.0;
+        let center = f64::midpoint(min, max);
         let half_range = range / 2.0;
         let padding = half_range * 0.05;
         let expanded_half_range = half_range + padding;
@@ -159,7 +159,7 @@ mod tests {
     fn test_sparkline_generation() {
         let mut data = VecDeque::new();
         for i in 0..10 {
-            data.push_back(i as f64);
+            data.push_back(f64::from(i));
         }
         
         let result = generate_sparkline(&data, MetricType::Tps);

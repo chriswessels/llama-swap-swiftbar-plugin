@@ -2,12 +2,15 @@ use std::process::Command;
 use crate::constants::LAUNCH_AGENT_LABEL;
 use crate::types::error_helpers::{with_context, get_home_dir, CONNECT_API, START_SERVICE, STOP_SERVICE, GET_USER_ID, CREATE_DIR, CREATE_FILE, EXEC_COMMAND};
 
+
 pub fn handle_command(command: &str) -> crate::Result<()> {
     match command {
         "do_start" => start_service(),
         "do_stop" => stop_service(),
         "do_restart" => restart_service(),
         "do_unload" => unload_models(),
+        "do_install" => install_service(),
+        "do_uninstall" => uninstall_service(),
         "view_logs" => view_file(crate::constants::LOG_FILE_PATH, create_default_log),
         "view_config" => view_file(crate::constants::CONFIG_FILE_PATH, create_default_config),
         _ => Err(format!("Unknown command: {command}").into()),
@@ -180,7 +183,7 @@ fn get_user_id() -> crate::Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-fn is_service_installed() -> crate::Result<bool> {
+pub fn is_service_installed() -> crate::Result<bool> {
     let plist_path = get_plist_path()?;
     Ok(std::path::Path::new(&plist_path).exists())
 }
@@ -193,7 +196,7 @@ fn get_plist_path() -> crate::Result<String> {
 fn expand_tilde(path: &str) -> crate::Result<String> {
     if path.starts_with("~/") {
         let home = get_home_dir()?;
-        Ok(path.replacen("~", &home, 1))
+        Ok(path.replacen('~', &home, 1))
     } else {
         Ok(path.to_string())
     }
@@ -201,6 +204,113 @@ fn expand_tilde(path: &str) -> crate::Result<String> {
 
 fn create_default_log() -> &'static str {
     "# Llama-Swap Plugin Log\n"
+}
+
+fn install_service() -> crate::Result<()> {
+    if is_service_installed()? {
+        return Err("Service already installed".into());
+    }
+    
+    let binary_path = find_llama_swap_binary()?;
+    let plist_content = generate_plist_content(&binary_path)?;
+    let plist_path = get_plist_path()?;
+    
+    // Create LaunchAgents directory if it doesn't exist
+    if let Some(parent) = std::path::Path::new(&plist_path).parent() {
+        with_context(std::fs::create_dir_all(parent), CREATE_DIR)?;
+    }
+    
+    // Write plist file
+    with_context(std::fs::write(&plist_path, plist_content), CREATE_FILE)?;
+    
+    // Set proper permissions (644)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::Permissions::from_mode(0o644);
+        with_context(std::fs::set_permissions(&plist_path, perms), "Failed to set plist permissions")?;
+    }
+    
+    Ok(())
+}
+
+fn uninstall_service() -> crate::Result<()> {
+    eprintln!("Uninstalling Llama-Swap service...");
+    
+    if !is_service_installed()? {
+        return Err("Service is not installed.".into());
+    }
+    
+    // Try to stop the service first if it's running
+    if crate::service::is_service_running() {
+        eprintln!("Stopping service before uninstallation...");
+        let _ = stop_service(); // Continue even if stop fails
+    }
+    
+    let plist_path = get_plist_path()?;
+    
+    // Remove plist file
+    with_context(std::fs::remove_file(&plist_path), "Failed to remove plist file")?;
+    
+    eprintln!("Service uninstalled successfully");
+    Ok(())
+}
+
+pub fn find_llama_swap_binary() -> crate::Result<String> {
+    // Check if llama-swap is in PATH
+    let output = Command::new("which")
+        .arg("llama-swap")
+        .output()
+        .map_err(|_| "Failed to run 'which' command")?;
+    
+    if output.status.success() {
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !path.is_empty() {
+            return Ok(path);
+        }
+    }
+    
+    Err("llama-swap binary not found in PATH. Please install llama-swap first:\n\n  brew install llama-swap\n\nOr ensure it's available in your PATH.".into())
+}
+
+
+fn generate_plist_content(binary_path: &str) -> crate::Result<String> {
+    let log_path = expand_tilde(crate::constants::LOG_FILE_PATH)?;
+    let working_dir = get_home_dir()?;
+    
+    let plist = format!(r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{}</string>
+        <string>--port</string>
+        <string>{}</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>{}</string>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>KeepAlive</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>{}</string>
+    <key>StandardErrorPath</key>
+    <string>{}</string>
+</dict>
+</plist>"#,
+        LAUNCH_AGENT_LABEL,
+        binary_path,
+        crate::constants::API_PORT,
+        working_dir,
+        log_path,
+        log_path
+    );
+    
+    Ok(plist)
 }
 
 fn create_default_config() -> &'static str {

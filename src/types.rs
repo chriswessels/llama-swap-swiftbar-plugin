@@ -1,13 +1,10 @@
 use crate::models::{AllMetricsHistory, AllMetrics};
-use crate::state_machines::agent::{AgentStateMachine, AgentStates, AgentContext, AgentEvents, ServiceRunning};
-use crate::state_machines::model::{ModelStateMachine, ModelContext, ModelEvents, ModelLoading, ModelActive};
-use crate::state_machines::polling_mode::{PollingModeStateMachine, PollingModeContext, PollingModeEvents, StateChange, QueueActivity};
-use crate::state_machines::program::{ProgramStateMachine, ProgramContext, ProgramEvents, AgentUpdate, ModelUpdate};
-use crate::{metrics, service};
+use crate::state_model::{AgentState, DisplayState, PollingMode, ModelState};
+use crate::metrics;
 use reqwest::blocking::Client;
 use std::collections::HashMap;
 use std::error::Error;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
@@ -45,12 +42,14 @@ pub struct PluginState {
     pub current_all_metrics: Option<AllMetrics>,
     pub error_count: usize,
     
-    // State machines
-    pub agent_state_machine: AgentStateMachine<AgentContext>,
-    pub polling_mode_state_machine: PollingModeStateMachine<PollingModeContext>,
-    pub program_state_machine: ProgramStateMachine<ProgramContext>,
-    pub model_state_machines: HashMap<String, ModelStateMachine<ModelContext>>,
+    // Simplified state
+    pub agent_state: AgentState,
+    pub polling_mode: PollingMode,
+    pub model_states: HashMap<String, ModelState>,
     
+    // Timing for state transitions
+    last_state_change: Instant,
+    startup_time: Option<Instant>,
 }
 
 impl PluginState {
@@ -59,41 +58,41 @@ impl PluginState {
             .timeout(Duration::from_secs(crate::constants::API_TIMEOUT_SECS))
             .build()?;
 
-        let agent_context = AgentContext::new();
-        let polling_mode_context = PollingModeContext::new();
-        let program_context = ProgramContext::new();
-        
-        let agent_state_machine = AgentStateMachine::new(agent_context);
-        let polling_mode_state_machine = PollingModeStateMachine::new(polling_mode_context);
-        let program_state_machine = ProgramStateMachine::new(program_context);
+        // Determine initial agent state
+        let plist_installed = crate::commands::is_service_installed().unwrap_or(false);
+        let binary_available = crate::commands::find_llama_swap_binary().is_ok();
+        let service_running = crate::service::is_service_running();
+        let agent_state = AgentState::from_system_check(plist_installed, binary_available, service_running);
 
         Ok(Self {
             http_client,
             metrics_history: AllMetricsHistory::new(),
             current_all_metrics: None,
             error_count: 0,
-            agent_state_machine,
-            polling_mode_state_machine,
-            program_state_machine,
-            model_state_machines: HashMap::new(),
+            agent_state,
+            polling_mode: PollingMode::Idle,
+            model_states: HashMap::new(),
+            last_state_change: Instant::now(),
+            startup_time: None,
         })
     }
     
     pub fn update_polling_mode(&mut self) {
-        let old_state = *self.polling_mode_state_machine.state();
-        
-        // Always send state change detection event - the state machine will handle transition timing
-        let _ = self.polling_mode_state_machine.process_event(PollingModeEvents::StateChangeDetected(StateChange));
-        
-        // Check for queue activity
+        let old_mode = self.polling_mode;
+        let state_changed = self.last_state_change.elapsed() < Duration::from_millis(100);
         let has_activity = self.has_queue_activity();
-        let _ = self.polling_mode_state_machine.process_event(PollingModeEvents::ActivityCheck(QueueActivity(has_activity)));
         
-        let new_state = *self.polling_mode_state_machine.state();
-        if new_state != old_state {
+        self.polling_mode = PollingMode::compute(
+            self.polling_mode,
+            state_changed,
+            has_activity,
+            self.last_state_change.elapsed(),
+        );
+        
+        if self.polling_mode != old_mode {
             eprintln!("Polling mode: {} -> {} ({})", 
-                old_state.description(),
-                new_state.description(),
+                old_mode.description(),
+                self.polling_mode.description(),
                 self.get_mode_reason()
             );
         }
@@ -142,22 +141,39 @@ impl PluginState {
     }
     
     pub fn update_agent_state(&mut self) {
-        let is_service_running = service::is_service_running();
-        let old_state = *self.agent_state_machine.state();
+        let old_state = self.agent_state;
         
-        // Send service detection event to state machine
-        let _ = self.agent_state_machine.process_event(AgentEvents::ServiceDetected(ServiceRunning(is_service_running)));
+        // Get current system status
+        let plist_installed = crate::commands::is_service_installed().unwrap_or(false);
+        let binary_available = crate::commands::find_llama_swap_binary().is_ok();
+        let service_running = crate::service::is_service_running();
         
-        // Check if we need to complete startup after timeout
-        if let AgentStates::Starting = self.agent_state_machine.state() {
-            if self.agent_state_machine.context().should_complete_startup() {
-                let _ = self.agent_state_machine.process_event(AgentEvents::StartupComplete(crate::state_machines::agent::StartupTimeout));
+        // Compute new state
+        let new_state = AgentState::from_system_check(plist_installed, binary_available, service_running);
+        
+        // Handle Starting -> Running/Stopped transition after timeout
+        if let AgentState::Starting = self.agent_state {
+            if let Some(startup_time) = self.startup_time {
+                if startup_time.elapsed() >= Duration::from_secs(5) {
+                    self.agent_state = if service_running {
+                        AgentState::Running
+                    } else {
+                        AgentState::Stopped
+                    };
+                    self.startup_time = None;
+                }
             }
+        } else if matches!(old_state, AgentState::Stopped) && matches!(new_state, AgentState::Running) {
+            // Transition through Starting state
+            self.agent_state = AgentState::Starting;
+            self.startup_time = Some(Instant::now());
+        } else {
+            self.agent_state = new_state;
         }
         
-        let new_state = *self.agent_state_machine.state();
-        if new_state != old_state {
-            eprintln!("Agent state: {old_state:?} -> {new_state:?}");
+        if self.agent_state != old_state {
+            self.last_state_change = Instant::now();
+            eprintln!("Agent state: {old_state:?} -> {:?}", self.agent_state);
         }
     }
     
@@ -166,76 +182,65 @@ impl PluginState {
         self.current_all_metrics = Some(all_metrics.clone());
         self.error_count = 0;
         
-        // Update model state machines
-        self.update_model_state_machines(&all_metrics);
-        
-        // Update program state machine with agent and model updates
-        self.update_program_state_machine(&all_metrics);
+        // Update model states
+        self.update_model_states(&all_metrics);
     }
     
     pub fn handle_metrics_error(&mut self, error: Box<dyn Error>) {
         eprintln!("Metrics fetch failed: {error}");
         self.error_count += 1;
         
-        // Clear model state machines on error
-        self.model_state_machines.clear();
+        // Clear model states on error
+        self.model_states.clear();
         
-        // Update program state machine with agent state only (no models)
-        let agent_state = *self.agent_state_machine.state();
-        let _ = self.program_state_machine.process_event(ProgramEvents::AgentStateChanged(AgentUpdate(agent_state)));
-        
-        // Update with empty model state
-        let model_update = ModelUpdate {
-            has_models: false,
-            has_loading: false,
-            has_activity: false,
-        };
-        let _ = self.program_state_machine.process_event(ProgramEvents::ModelStateChanged(model_update));
-        
-        if !matches!(self.agent_state_machine.state(), AgentStates::Running) {
+        if !matches!(self.agent_state, AgentState::Running) {
             self.current_all_metrics = None;
-            self.metrics_history.clear();
+            self.metrics_history.models.clear();
+            self.metrics_history.total_llama_memory_mb.clear();
+            self.metrics_history.cpu_usage_percent.clear();
+            self.metrics_history.memory_usage_percent.clear();
+            self.metrics_history.used_memory_gb.clear();
         } else {
             self.current_all_metrics = None;
         }
     }
     
-    pub fn update_model_state_machines(&mut self, all_metrics: &AllMetrics) {
+    pub fn update_model_states(&mut self, all_metrics: &AllMetrics) {
         // Remove models that no longer exist
         let current_model_names: std::collections::HashSet<String> = all_metrics.models.iter().map(|m| m.model_name.clone()).collect();
-        self.model_state_machines.retain(|name, _| current_model_names.contains(name));
+        self.model_states.retain(|name, _| current_model_names.contains(name));
         
-        // Update or create state machines for each model
+        // Update or create states for each model
         for model_data in &all_metrics.models {
-            let state_machine = self.model_state_machines.entry(model_data.model_name.clone())
-                .or_insert_with(|| ModelStateMachine::new(ModelContext::new()));
-            
-            // Update with loading status
-            let is_loading = model_data.model_state == crate::models::ModelState::Loading;
-            let _ = state_machine.process_event(ModelEvents::LoadingUpdate(ModelLoading(is_loading)));
-            
-            // Update with active status
-            let is_active = model_data.model_state == crate::models::ModelState::Running;
-            let _ = state_machine.process_event(ModelEvents::ActiveUpdate(ModelActive(is_active)));
+            let state = match model_data.model_state {
+                crate::models::ModelState::Loading => ModelState::Loading,
+                crate::models::ModelState::Running => ModelState::Running,
+                crate::models::ModelState::Unknown => ModelState::Unknown,
+            };
+            self.model_states.insert(model_data.model_name.clone(), state);
         }
     }
     
-    pub fn update_program_state_machine(&mut self, all_metrics: &AllMetrics) {
-        // Update with agent state
-        let agent_state = *self.agent_state_machine.state();
-        let _ = self.program_state_machine.process_event(ProgramEvents::AgentStateChanged(AgentUpdate(agent_state)));
-        
-        // Determine model summary
-        let has_models = !all_metrics.models.is_empty();
-        let has_loading = self.model_state_machines.values().any(|sm| sm.state().is_loading());
-        let has_activity = self.has_queue_activity();
-        
-        let model_update = ModelUpdate {
-            has_models,
-            has_loading,
-            has_activity,
-        };
-        
-        let _ = self.program_state_machine.process_event(ProgramEvents::ModelStateChanged(model_update));
+    pub fn get_display_state(&self) -> DisplayState {
+        match self.agent_state {
+            AgentState::NotReady { .. } => DisplayState::AgentNotLoaded,
+            AgentState::Starting => DisplayState::AgentStarting,
+            AgentState::Stopped => DisplayState::AgentNotLoaded,
+            AgentState::Running => {
+                if self.model_states.is_empty() {
+                    DisplayState::ServiceLoadedNoModel
+                } else if self.has_loading_models() {
+                    DisplayState::ModelLoading
+                } else if self.has_queue_activity() {
+                    DisplayState::ModelProcessingQueue
+                } else {
+                    DisplayState::ModelReady
+                }
+            }
+        }
+    }
+    
+    pub fn has_loading_models(&self) -> bool {
+        self.model_states.values().any(|state| state.is_loading())
     }
 }

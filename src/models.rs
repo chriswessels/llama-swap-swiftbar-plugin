@@ -9,48 +9,6 @@ pub enum ModelState {
     Unknown,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum AgentState {
-    NotInstalled,
-    Stopped,
-    Starting,
-    Running,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ProgramState {
-    ModelProcessingQueue,  // blue
-    ModelReady,           // green  
-    ModelLoading,         // yellow
-    ServiceLoadedNoModel, // grey
-    AgentStarting,        // yellow
-    AgentNotLoaded,       // red
-}
-
-impl ProgramState {
-    pub fn icon_color(&self) -> &'static str {
-        match self {
-            ProgramState::ModelProcessingQueue => "blue",
-            ProgramState::ModelReady => "green",
-            ProgramState::ModelLoading => "yellow",
-            ProgramState::ServiceLoadedNoModel => "grey",
-            ProgramState::AgentStarting => "yellow",
-            ProgramState::AgentNotLoaded => "red",
-        }
-    }
-    
-    pub fn status_message(&self) -> &'static str {
-        match self {
-            ProgramState::ModelProcessingQueue => "Model actively processing queue",
-            ProgramState::ModelReady => "Model ready, queue empty",
-            ProgramState::ModelLoading => "Model loading",
-            ProgramState::ServiceLoadedNoModel => "Service loaded, no model loaded",
-            ProgramState::AgentStarting => "Agent starting",
-            ProgramState::AgentNotLoaded => "Agent not loaded",
-        }
-    }
-}
-
 #[derive(Debug, Deserialize)]
 pub struct RunningModel {
     pub model: String,
@@ -72,13 +30,6 @@ pub struct RunningResponse {
     pub running: Vec<RunningModel>,
 }
 
-#[derive(Debug)]
-pub struct MetricsResponse {
-    pub running_models: Vec<RunningModel>,
-    pub total_memory_bytes: u64,
-    pub model_count: usize,
-}
-
 #[derive(Debug, Clone)]
 pub struct ModelMetrics {
     pub model_name: String,
@@ -89,9 +40,7 @@ pub struct ModelMetrics {
 #[derive(Debug, Clone)]
 pub struct SystemMetrics {
     pub cpu_usage_percent: f64,
-    pub total_memory_gb: f64,
     pub used_memory_gb: f64,
-    pub available_memory_gb: f64,
     pub memory_usage_percent: f64,
 }
 
@@ -127,21 +76,6 @@ impl Metrics {
             (_, 0) if self.requests_processing == 1 => "busy".to_string(),
             (_, 0) => format!("busy ({})", self.requests_processing),
             _ => format!("queued ({total_requests})"),
-        }
-    }
-}
-
-impl From<MetricsResponse> for Metrics {
-    fn from(resp: MetricsResponse) -> Self {
-        Self {
-            prompt_tokens_per_sec: 0.0,
-            predicted_tokens_per_sec: 0.0,
-            requests_processing: 0,
-            requests_deferred: 0,
-            kv_cache_usage_ratio: 0.0,
-            kv_cache_tokens: 0,
-            n_decode_total: 0,
-            memory_mb: resp.total_memory_bytes as f64 / 1_048_576.0,
         }
     }
 }
@@ -286,18 +220,6 @@ impl MetricsHistory {
         DataAnalyzer::trim_deque(&mut self.kv_cache_tokens, cutoff);
     }
     
-    pub fn get_values(&self, deque: &VecDeque<TimestampedValue>) -> VecDeque<f64> {
-        deque.iter().map(|tv| tv.value).collect()
-    }
-    
-    pub fn clear(&mut self) {
-        self.tps.clear();
-        self.prompt_tps.clear();
-        self.memory_mb.clear();
-        self.kv_cache_percent.clear();
-        self.kv_cache_tokens.clear();
-    }
-    
     pub fn get_stats(&self, deque: &VecDeque<TimestampedValue>) -> MetricStats {
         DataAnalyzer::get_stats(deque)
     }
@@ -377,20 +299,8 @@ impl AllMetricsHistory {
         self.models.retain(|_, history| !history.tps.is_empty());
     }
     
-    pub fn clear(&mut self) {
-        self.models.clear();
-        self.total_llama_memory_mb.clear();
-        self.cpu_usage_percent.clear();
-        self.memory_usage_percent.clear();
-        self.used_memory_gb.clear();
-    }
-    
     pub fn get_model_history(&self, model_name: &str) -> Option<&MetricsHistory> {
         self.models.get(model_name)
-    }
-    
-    pub fn get_model_names(&self) -> Vec<String> {
-        self.models.keys().cloned().collect()
     }
     
     // Unified stats methods using DataAnalyzer

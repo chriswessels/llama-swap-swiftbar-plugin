@@ -66,7 +66,7 @@ fn parse_prometheus_metrics(text: &str) -> HashMap<String, f64> {
             METRIC_MAPPINGS
                 .iter()
                 .find(|(source, _)| *source == metric.name)
-                .map(|(_, target)| (target.to_string(), metric.value))
+                .map(|(_, target)| ((*target).to_string(), metric.value))
         })
         .collect()
 }
@@ -82,23 +82,18 @@ fn collect_system_metrics() -> SystemMetrics {
     std::thread::sleep(Duration::from_millis(200));
     system.refresh_cpu_all();
     
-    let cpu_usage_percent = system.global_cpu_usage() as f64;
+    let cpu_usage_percent = f64::from(system.global_cpu_usage());
     
     // Memory metrics
     let total_memory_bytes = system.total_memory();
     let used_memory_bytes = system.used_memory();
-    let available_memory_bytes = system.available_memory();
     
-    let total_memory_gb = bytes_to_gb(total_memory_bytes);
     let used_memory_gb = bytes_to_gb(used_memory_bytes);
-    let available_memory_gb = bytes_to_gb(available_memory_bytes);
     let memory_usage_percent = percentage(used_memory_bytes, total_memory_bytes);
         
     SystemMetrics {
         cpu_usage_percent,
-        total_memory_gb,
         used_memory_gb,
-        available_memory_gb,
         memory_usage_percent,
     }
 }
@@ -114,7 +109,7 @@ fn get_llama_server_memory_mb() -> f64 {
             let name = process.name().to_string_lossy();
             name.contains("llama-server") || name.contains("llama_server") || name.contains("llama-swap")
         })
-        .map(|process| process.memory())
+        .map(sysinfo::Process::memory)
         .sum::<u64>();
     
     total_memory_kb as f64 / 1024.0
@@ -125,7 +120,7 @@ fn fetch_model_metrics(client: &Client, model: &RunningModel) -> HashMap<String,
         "{}:{}/upstream/{}/metrics", 
         constants::API_BASE_URL, 
         constants::API_PORT,
-        model.model.replace(":", "%3A")
+        model.model.replace(':', "%3A")
     );
     
     client
@@ -139,8 +134,8 @@ fn fetch_model_metrics(client: &Client, model: &RunningModel) -> HashMap<String,
         .unwrap_or_default()
 }
 
-fn create_metrics_from_data(data: &HashMap<String, f64>) -> crate::Result<Metrics> {
-    let metrics = Metrics {
+fn create_metrics_from_data(data: &HashMap<String, f64>) -> Metrics {
+    Metrics {
         prompt_tokens_per_sec: get_metric_value(data, "prompt_tokens_per_sec"),
         predicted_tokens_per_sec: get_metric_value(data, "predicted_tokens_per_sec"),
         requests_processing: get_metric_value(data, "requests_processing") as u32,
@@ -149,9 +144,7 @@ fn create_metrics_from_data(data: &HashMap<String, f64>) -> crate::Result<Metric
         kv_cache_tokens: get_metric_value(data, "kv_cache_tokens") as u32,
         n_decode_total: get_metric_value(data, "n_decode_total") as u32,
         memory_mb: 0.0,
-    };
-    
-    Ok(metrics)
+    }
 }
 
 pub fn fetch_all_metrics(client: &Client) -> crate::Result<AllMetrics> {
@@ -181,7 +174,7 @@ pub fn fetch_all_metrics(client: &Client) -> crate::Result<AllMetrics> {
             let model_state = model.model_state();
             let metrics = if model_state == crate::models::ModelState::Running {
                 let model_metrics_data = fetch_model_metrics(client, model);
-                create_metrics_from_data(&model_metrics_data).unwrap_or_default()
+                create_metrics_from_data(&model_metrics_data)
             } else {
                 // For loading/unknown models, use empty metrics
                 Metrics::default()
@@ -225,7 +218,7 @@ mod tests {
     
     #[test]
     fn test_prometheus_parsing() {
-        let sample_prometheus = r#"# HELP llamacpp:prompt_tokens_seconds Prompt tokens per second
+        let sample_prometheus = r"# HELP llamacpp:prompt_tokens_seconds Prompt tokens per second
 # TYPE llamacpp:prompt_tokens_seconds gauge
 llamacpp:prompt_tokens_seconds 150.5
 # HELP llamacpp:predicted_tokens_seconds Predicted tokens per second  
@@ -233,7 +226,7 @@ llamacpp:prompt_tokens_seconds 150.5
 llamacpp:predicted_tokens_seconds 25.3
 # HELP llamacpp:requests_processing Number of requests being processed
 # TYPE llamacpp:requests_processing gauge
-llamacpp:requests_processing 2"#;
+llamacpp:requests_processing 2";
         
         let metrics = parse_prometheus_metrics(sample_prometheus);
         
