@@ -15,7 +15,7 @@ fn create_colored_item(text: &str, color: &str) -> ContentItem {
 /// Helper function to create command menu items
 fn create_command_item(text: &str, exe_path: &str, action: &str) -> crate::Result<ContentItem> {
     let command = bitbar::attr::Command::try_from((exe_path, action))?;
-    Ok(ContentItem::new(text).command(command)?.refresh())
+    Ok(ContentItem::new(text).command(command)?)
 }
 
 /// Convert program state color names to hex codes
@@ -301,7 +301,7 @@ impl MenuBuilder {
         let total_memory_mb: f64 = processes.iter().map(|p| p.memory_mb).sum();
 
         // Create main header item with chart
-        let header_text = format!("Llama Processes: {:.0} MB", total_memory_mb);
+        let header_text = format!("Llama Processes: {}", format_memory_mb(total_memory_mb));
         let mut header_item = ContentItem::new(header_text);
 
         // Add the memory trend chart
@@ -319,13 +319,13 @@ impl MenuBuilder {
         for process in &processes {
             let process_text = if let Some(ref model) = process.inferred_model {
                 format!(
-                    "├─ {} ({}): {:.0} MB - {}",
-                    process.name, process.pid, process.memory_mb, model
+                    "├─ {} ({}): {} - {}",
+                    process.name, process.pid, format_memory_mb(process.memory_mb), model
                 )
             } else {
                 format!(
-                    "├─ {} ({}): {:.0} MB",
-                    process.name, process.pid, process.memory_mb
+                    "├─ {} ({}): {}",
+                    process.name, process.pid, format_memory_mb(process.memory_mb)
                 )
             };
 
@@ -335,8 +335,8 @@ impl MenuBuilder {
         // Add total summary at the end
         submenu.push(MenuItem::Sep);
         submenu.push(MenuItem::Content(ContentItem::new(format!(
-            "Total: {:.0} MB across {} process{}",
-            total_memory_mb,
+            "Total: {} across {} process{}",
+            format_memory_mb(total_memory_mb),
             processes.len(),
             if processes.len() == 1 { "" } else { "es" }
         ))));
@@ -788,6 +788,14 @@ fn format_tps(v: f64) -> String {
 
 fn format_percent(v: f64) -> String {
     format!("{v:.1}%")
+}
+
+fn format_memory_mb(mb: f64) -> String {
+    if mb >= 1024.0 {
+        format!("{:.1} GB", mb / 1024.0)
+    } else {
+        format!("{:.0} MB", mb)
+    }
 }
 
 pub fn build_menu(state: &PluginState) -> crate::Result<String> {

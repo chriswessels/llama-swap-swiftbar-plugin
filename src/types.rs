@@ -287,7 +287,25 @@ impl PluginState {
     }
 
     pub fn handle_metrics_success(&mut self, all_metrics: AllMetrics) {
-        self.metrics_history.push(&all_metrics);
+        // Don't call push() which would overwrite independently collected system metrics
+        // Instead, only update model-specific metrics and current state
+
+        // Update model histories
+        for model_metrics in &all_metrics.models {
+            let history = self
+                .metrics_history
+                .models
+                .entry(model_metrics.model_name.clone())
+                .or_insert_with(|| crate::models::MetricsHistory::with_capacity(self.metrics_history.max_size));
+            history.push(&model_metrics.metrics);
+        }
+
+        // Don't update llama memory here - it's collected independently in update_state
+        // to avoid overwriting good data with API response zeros when models are unloaded
+
+        // Trim old data for all metrics
+        self.metrics_history.trim_old_data();
+
         self.current_all_metrics = Some(all_metrics.clone());
         self.error_count = 0;
 
@@ -299,22 +317,16 @@ impl PluginState {
         eprintln!("Metrics fetch failed: {error}");
         self.error_count += 1;
 
-        // Clear model states on error
+        // Clear current model states since we can't verify their current status
         self.model_states.clear();
 
-        if !matches!(self.agent_state, AgentState::Running) {
-            self.current_all_metrics = None;
-            self.metrics_history.models.clear();
-            self.metrics_history.total_llama_memory_mb.clear();
-            self.metrics_history.cpu_usage_percent.clear();
-            self.metrics_history.memory_usage_percent.clear();
-            self.metrics_history.used_memory_gb.clear();
-        } else {
-            // When agent is running but API fails, keep system metrics but clear model metrics
-            self.current_all_metrics = None;
-            self.metrics_history.models.clear();
-            // Note: System metrics (CPU, memory, llama memory) are now collected independently and not cleared
-        }
+        // Clear current metrics snapshot, but preserve all historical data
+        // All metrics (system, model, llama memory) are preserved within the 5-minute retention window
+        // Natural time-based cleanup will handle old data automatically
+        self.current_all_metrics = None;
+        
+        // Note: All historical metrics (system, model, llama memory) are preserved across API failures
+        // and service issues, only cleaned up by the natural 5-minute retention window
     }
 
     pub fn update_model_states(&mut self, all_metrics: &AllMetrics) {

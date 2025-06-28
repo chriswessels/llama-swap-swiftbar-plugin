@@ -344,7 +344,14 @@ impl AllMetricsHistory {
             history.trim_old_data();
         }
 
-        self.models.retain(|_, history| !history.tps.is_empty());
+        // Only remove model histories if they have no data at all (never had any metrics)
+        // This preserves historical data for unloaded models for the full 5-minute window
+        self.models.retain(|_, history| {
+            !history.tps.is_empty() || 
+            !history.prompt_tps.is_empty() || 
+            !history.memory_mb.is_empty() || 
+            !history.queue_size.is_empty()
+        });
     }
 
     pub fn get_model_history(&self, model_name: &str) -> Option<&MetricsHistory> {
