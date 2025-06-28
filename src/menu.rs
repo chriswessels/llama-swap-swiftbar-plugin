@@ -15,7 +15,7 @@ fn create_colored_item(text: &str, color: &str) -> ContentItem {
 /// Helper function to create command menu items
 fn create_command_item(text: &str, exe_path: &str, action: &str) -> crate::Result<ContentItem> {
     let command = bitbar::attr::Command::try_from((exe_path, action))?;
-    Ok(ContentItem::new(text).command(command)?)
+    Ok(ContentItem::new(text).command(command)?.refresh())
 }
 
 
