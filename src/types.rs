@@ -2,12 +2,12 @@ use crate::models::{AllMetricsHistory, AllMetrics};
 use crate::state_machines::agent::{AgentStateMachine, AgentStates, AgentContext, AgentEvents, ServiceRunning};
 use crate::state_machines::model::{ModelStateMachine, ModelContext, ModelEvents, ModelLoading, ModelActive};
 use crate::state_machines::polling_mode::{PollingModeStateMachine, PollingModeContext, PollingModeEvents, StateChange, QueueActivity};
-use crate::state_machines::program::{ProgramStateMachine, ProgramStates, ProgramContext, ProgramEvents, AgentUpdate, ModelUpdate};
+use crate::state_machines::program::{ProgramStateMachine, ProgramContext, ProgramEvents, AgentUpdate, ModelUpdate};
 use crate::{metrics, service};
 use reqwest::blocking::Client;
 use std::collections::HashMap;
 use std::error::Error;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
@@ -23,9 +23,6 @@ pub struct PluginState {
     pub program_state_machine: ProgramStateMachine<ProgramContext>,
     pub model_state_machines: HashMap<String, ModelStateMachine<ModelContext>>,
     
-    // Previous states for change detection
-    pub last_program_state: ProgramStates,
-    pub last_agent_state: AgentStates,
 }
 
 impl PluginState {
@@ -51,21 +48,14 @@ impl PluginState {
             polling_mode_state_machine,
             program_state_machine,
             model_state_machines: HashMap::new(),
-            last_program_state: ProgramStates::AgentNotLoaded,
-            last_agent_state: AgentStates::NotInstalled,
         })
     }
     
     pub fn update_polling_mode(&mut self) {
         let old_state = self.polling_mode_state_machine.state().clone();
         
-        // Check for state changes that should trigger polling mode updates
-        let current_program_state = self.program_state_machine.state().clone();
-        let current_agent_state = self.agent_state_machine.state().clone();
-        
-        if current_program_state != self.last_program_state || current_agent_state != self.last_agent_state {
-            let _ = self.polling_mode_state_machine.process_event(PollingModeEvents::StateChangeDetected(StateChange));
-        }
+        // Always send state change detection event - the state machine will handle transition timing
+        let _ = self.polling_mode_state_machine.process_event(PollingModeEvents::StateChangeDetected(StateChange));
         
         // Check for queue activity
         let has_activity = self.has_queue_activity();
@@ -92,11 +82,6 @@ impl PluginState {
     }
     
     pub fn get_mode_reason(&self) -> String {
-        let current_program_state = self.program_state_machine.state().clone();
-        if current_program_state != self.last_program_state {
-            return format!("program state changed: {:?} -> {:?}", self.last_program_state, current_program_state);
-        }
-        
         if let Some(ref all_metrics) = self.current_all_metrics {
             let (total_processing, total_deferred) = all_metrics.models.iter().fold(
                 (0, 0),
@@ -116,9 +101,6 @@ impl PluginState {
     }
     
     pub fn update_state(&mut self) {
-        self.last_program_state = self.program_state_machine.state().clone();
-        self.last_agent_state = self.agent_state_machine.state().clone();
-        
         // Update agent state with proper transitions
         self.update_agent_state();
         

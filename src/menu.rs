@@ -2,7 +2,6 @@ use bitbar::{Menu, MenuItem, ContentItem, attr};
 use crate::{icons, charts};
 use crate::models::{AllMetricsHistory, MetricsHistory, TimestampedValue};
 use crate::state_machines::program::ProgramStates;
-use crate::state_machines::agent::AgentStates;
 use std::collections::VecDeque;
 
 // Use the shared PluginState
@@ -113,7 +112,7 @@ impl MenuBuilder {
             return None;
         }
         
-        let insights = history.get_insights(primary_data);
+        let insights = history.get_stats(primary_data);
         let label = build_label(name, &insights, secondary_data, format_fn, &display_type);
         let mut item = ContentItem::new(label);
         
@@ -138,7 +137,7 @@ impl MenuBuilder {
             return None;
         }
         
-        let insights = get_system_insights(name, history);
+        let insights = get_system_stats(name, history);
         let label = build_label(name, &insights, secondary_data, format_fn, &display_type);
         let mut item = ContentItem::new(label);
         
@@ -241,7 +240,7 @@ impl MenuBuilder {
 
 fn build_label(
     name: &str,
-    insights: &crate::models::MetricInsights,
+    insights: &crate::models::MetricStats,
     secondary_data: Option<&VecDeque<TimestampedValue>>,
     format_fn: fn(f64) -> String,
     display_type: &MetricDisplayType,
@@ -278,17 +277,17 @@ fn add_chart(item: &mut ContentItem, data: &VecDeque<TimestampedValue>, chart_ty
     }
 }
 
-fn get_system_insights(metric_name: &str, history: &AllMetricsHistory) -> crate::models::MetricInsights {
+fn get_system_stats(metric_name: &str, history: &AllMetricsHistory) -> crate::models::MetricStats {
     match metric_name {
-        "CPU" => history.get_cpu_insights(),
-        "Memory" => history.get_system_memory_insights(),
-        "Llama Memory" => history.get_memory_insights(),
+        "CPU" => history.get_cpu_stats(),
+        "Memory" => history.get_system_memory_stats(),
+        "Llama Memory" => history.get_memory_stats(),
         _ => unreachable!(),
     }
 }
 
 fn build_submenu(
-    insights: &crate::models::MetricInsights,
+    insights: &crate::models::MetricStats,
     primary_data: &VecDeque<TimestampedValue>,
     secondary_data: Option<&VecDeque<TimestampedValue>>,
     format_fn: fn(f64) -> String,
@@ -329,14 +328,14 @@ fn build_submenu(
     submenu.push(MenuItem::Content(ContentItem::new(current_text)));
     
     // Range and statistics
-    if insights.data_points > 1 {
+    if insights.count > 1 {
         submenu.push(MenuItem::Content(
             ContentItem::new(format!("Range: {:.1} - {:.1}", insights.min, insights.max))
         ));
         
         match display_type {
             MetricDisplayType::KvCache => {
-                let stats = model_history.unwrap().calculate_stats(secondary_data.unwrap());
+                let stats = model_history.unwrap().get_stats(secondary_data.unwrap());
                 submenu.push(MenuItem::Content(
                     ContentItem::new(format!("Avg Tokens: {:.0}", stats.mean))
                 ));
@@ -354,7 +353,7 @@ fn build_submenu(
                 }
             },
             MetricDisplayType::LlamaMemory => {
-                let stats = system_history.unwrap().calculate_memory_stats();
+                let stats = system_history.unwrap().get_memory_stats();
                 submenu.push(MenuItem::Content(
                     ContentItem::new(format!("Average: {}", format_memory(stats.mean)))
                 ));
@@ -365,7 +364,7 @@ fn build_submenu(
                 ));
             },
             _ => {
-                let stats = calculate_stats_for_data(primary_data);
+                let stats = crate::models::DataAnalyzer::get_stats(primary_data);
                 submenu.push(MenuItem::Content(
                     ContentItem::new(format!("Average: {}", format_fn(stats.mean)))
                 ));
@@ -426,36 +425,6 @@ fn format_percent(v: f64) -> String {
     format!("{:.1}%", v)
 }
 
-fn calculate_stats_for_data(data: &VecDeque<TimestampedValue>) -> crate::models::MetricStats {
-    let values: Vec<f64> = data.iter().map(|tv| tv.value).collect();
-    
-    if values.is_empty() {
-        return crate::models::MetricStats {
-            mean: 0.0,
-            min: 0.0,
-            max: 0.0,
-            std_dev: 0.0,
-            count: 0,
-        };
-    }
-    
-    let mean = values.iter().sum::<f64>() / values.len() as f64;
-    let min = values.iter().cloned().fold(f64::INFINITY, f64::min);
-    let max = values.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-    
-    let variance = values.iter()
-        .map(|v| (v - mean).powi(2))
-        .sum::<f64>() / values.len() as f64;
-    let std_dev = variance.sqrt();
-    
-    crate::models::MetricStats {
-        mean,
-        min,
-        max,
-        std_dev,
-        count: values.len(),
-    }
-}
 
 pub fn build_menu(state: &PluginState) -> crate::Result<String> {
     let mut menu = MenuBuilder::new();
@@ -519,6 +488,7 @@ pub fn build_error_menu(message: &str) -> Result<String, std::fmt::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state_machines::agent::AgentStates;
     
     #[test]
     fn test_menu_with_running_service() {

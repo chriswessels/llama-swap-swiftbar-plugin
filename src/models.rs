@@ -152,17 +152,21 @@ pub struct TimestampedValue {
     pub value: f64,
 }
 
-#[derive(Debug)]
-pub struct MetricInsights {
-    pub current: f64,
+// MetricInsights has been merged into MetricStats
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct MetricStats {
+    pub mean: f64,
     pub min: f64,
     pub max: f64,
-    pub data_points: usize,
+    pub std_dev: f64,
+    pub count: usize,
+    pub current: f64,
 }
 
-impl MetricInsights {
+impl MetricStats {
     pub fn time_context(&self, oldest_timestamp: u64, newest_timestamp: u64) -> String {
-        match self.data_points {
+        match self.count {
             0 => String::new(),
             1 => "(now)".to_string(),
             _ => {
@@ -178,51 +182,12 @@ impl MetricInsights {
     }
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
-pub struct MetricStats {
-    pub mean: f64,
-    pub min: f64,
-    pub max: f64,
-    pub std_dev: f64,
-    pub count: usize,
-}
-
 
 // Unified analysis operations
-struct DataAnalyzer;
+pub struct DataAnalyzer;
 
 impl DataAnalyzer {
-    fn get_insights(data: &VecDeque<TimestampedValue>) -> MetricInsights {
-        let data_points = data.len();
-        
-        if data_points == 0 {
-            return MetricInsights {
-                current: 0.0,
-                min: 0.0,
-                max: 0.0,
-                data_points: 0,
-            };
-        }
-        
-        let current = data.back().unwrap().value;
-        let (min, max) = if data_points == 1 {
-            (current, current)
-        } else {
-            data.iter().map(|tv| tv.value).fold(
-                (f64::INFINITY, f64::NEG_INFINITY),
-                |(min_acc, max_acc), val| (min_acc.min(val), max_acc.max(val))
-            )
-        };
-        
-        MetricInsights {
-            current,
-            min,
-            max,
-            data_points,
-        }
-    }
-    
-    fn calculate_stats(data: &VecDeque<TimestampedValue>) -> MetricStats {
+    pub fn get_stats(data: &VecDeque<TimestampedValue>) -> MetricStats {
         if data.is_empty() {
             return MetricStats::default();
         }
@@ -231,6 +196,7 @@ impl DataAnalyzer {
         let sum: f64 = values.iter().sum();
         let count = values.len() as f64;
         let mean = sum / count;
+        let current = data.back().unwrap().value;
         
         let min = values.iter().fold(f64::INFINITY, |a, &b| a.min(b));
         let max = values.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
@@ -246,17 +212,18 @@ impl DataAnalyzer {
             max,
             std_dev,
             count: values.len(),
+            current,
         }
     }
         
-    fn push_value_to_deque(deque: &mut VecDeque<TimestampedValue>, value: f64, timestamp: u64, max_size: usize) {
+    pub fn push_value_to_deque(deque: &mut VecDeque<TimestampedValue>, value: f64, timestamp: u64, max_size: usize) {
         deque.push_back(TimestampedValue { timestamp, value });
         while deque.len() > max_size {
             deque.pop_front();
         }
     }
     
-    fn trim_deque(deque: &mut VecDeque<TimestampedValue>, cutoff: u64) {
+    pub fn trim_deque(deque: &mut VecDeque<TimestampedValue>, cutoff: u64) {
         while deque.front().map_or(false, |v| v.timestamp < cutoff) {
             deque.pop_front();
         }
@@ -331,12 +298,8 @@ impl MetricsHistory {
         self.kv_cache_tokens.clear();
     }
     
-    pub fn get_insights(&self, deque: &VecDeque<TimestampedValue>) -> MetricInsights {
-        DataAnalyzer::get_insights(deque)
-    }
-    
-    pub fn calculate_stats(&self, deque: &VecDeque<TimestampedValue>) -> MetricStats {
-        DataAnalyzer::calculate_stats(deque)
+    pub fn get_stats(&self, deque: &VecDeque<TimestampedValue>) -> MetricStats {
+        DataAnalyzer::get_stats(deque)
     }
 }
 
@@ -430,21 +393,17 @@ impl AllMetricsHistory {
         self.models.keys().cloned().collect()
     }
     
-    // Unified insights methods using DataAnalyzer
-    pub fn get_cpu_insights(&self) -> MetricInsights {
-        DataAnalyzer::get_insights(&self.cpu_usage_percent)
+    // Unified stats methods using DataAnalyzer
+    pub fn get_cpu_stats(&self) -> MetricStats {
+        DataAnalyzer::get_stats(&self.cpu_usage_percent)
     }
     
-    pub fn get_system_memory_insights(&self) -> MetricInsights {
-        DataAnalyzer::get_insights(&self.memory_usage_percent)
+    pub fn get_system_memory_stats(&self) -> MetricStats {
+        DataAnalyzer::get_stats(&self.memory_usage_percent)
     }
     
-    pub fn get_memory_insights(&self) -> MetricInsights {
-        DataAnalyzer::get_insights(&self.total_llama_memory_mb)
-    }
-    
-    pub fn calculate_memory_stats(&self) -> MetricStats {
-        DataAnalyzer::calculate_stats(&self.total_llama_memory_mb)
+    pub fn get_memory_stats(&self) -> MetricStats {
+        DataAnalyzer::get_stats(&self.total_llama_memory_mb)
     }
 }
 
