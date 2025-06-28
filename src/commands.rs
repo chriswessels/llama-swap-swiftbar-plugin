@@ -211,8 +211,8 @@ fn install_service() -> crate::Result<()> {
     
     // Just install the plist - don't check preconditions
     // The FSM will detect the new state and show appropriate UI
-    let binary_path = "/usr/local/bin/llama-swap"; // Expected brew install location
-    let plist_content = generate_plist_content(binary_path)?;
+    let binary_path = find_llama_swap_binary()?;
+    let plist_content = generate_plist_content(&binary_path)?;
     let plist_path = get_plist_path()?;
     
     // Create LaunchAgents directory if it doesn't exist
@@ -258,11 +258,12 @@ fn uninstall_service() -> crate::Result<()> {
 }
 
 pub fn find_llama_swap_binary() -> crate::Result<String> {
-    // Check if llama-swap is in PATH
-    let output = Command::new("which")
-        .arg("llama-swap")
+    // Run which in a shell context to load user PATH configs
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    let output = Command::new(&shell)
+        .args(["-i", "-c", "which llama-swap"]) // -i = interactive shell (loads .zshrc)
         .output()
-        .map_err(|_| "Failed to run 'which' command")?;
+        .map_err(|_| "Failed to run which command in shell context")?;
     
     if output.status.success() {
         let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -271,7 +272,7 @@ pub fn find_llama_swap_binary() -> crate::Result<String> {
         }
     }
     
-    Err("llama-swap binary not found in PATH. Please install llama-swap first:\n\n  brew install llama-swap\n\nOr ensure it's available in your PATH.".into())
+    Err("llama-swap binary not found in PATH. Please install llama-swap first and ensure it's available in your PATH.".into())
 }
 
 

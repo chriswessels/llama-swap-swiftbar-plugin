@@ -326,7 +326,7 @@ impl MenuBuilder {
             submenu.push(MenuItem::Content(ContentItem::new(format!(
                 "{} Binary: {}",
                 if binary_available { ":checkmark.circle:" } else { ":xmark.circle:" },
-                if binary_available { "Found" } else { "brew install llama-swap" }
+                if binary_available { "Found" } else { "Cannot find llama-swap in $PATH" }
             )).color(if binary_available { "#34C759" } else { "#FF9500" }).unwrap()));
             
             submenu.push(MenuItem::Content(ContentItem::new(format!(
