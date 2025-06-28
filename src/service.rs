@@ -1,20 +1,8 @@
 use std::process::Command;
 use crate::constants::LAUNCH_AGENT_LABEL;
 
-#[derive(Clone, Copy)]
-pub enum DetectionMethod {
-    LaunchctlList,
-}
-
-/// Check if service is running using the specified detection method
-pub fn is_service_running(method: DetectionMethod) -> bool {
-    match method {
-        DetectionMethod::LaunchctlList => check_via_launchctl(),
-    }
-}
-
-/// Check service status via launchctl
-fn check_via_launchctl() -> bool {
+/// Check if service is running via launchctl
+pub fn is_service_running() -> bool {
     Command::new("launchctl")
         .args(&["list", LAUNCH_AGENT_LABEL])
         .output()

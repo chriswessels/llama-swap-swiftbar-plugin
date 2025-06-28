@@ -114,7 +114,7 @@ impl PluginState {
     }
     
     pub fn update_agent_state(&mut self) {
-        let is_service_running = service::is_service_running(service::DetectionMethod::LaunchctlList);
+        let is_service_running = service::is_service_running();
         let old_state = self.agent_state_machine.state().clone();
         
         // Send service detection event to state machine
