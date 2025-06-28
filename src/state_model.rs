@@ -35,7 +35,8 @@ impl AgentState {
 pub enum DisplayState {
     AgentNotLoaded,
     AgentStarting,
-    ServiceLoadedNoModel,
+    ServiceStopped,        // Service stopped but ready to start
+    ServiceLoadedNoModel,  // Service running but no models
     ModelLoading,
     ModelProcessingQueue,
     ModelReady,
@@ -46,6 +47,7 @@ impl DisplayState {
         match self {
             DisplayState::AgentNotLoaded => "Missing requirements",
             DisplayState::AgentStarting => "Starting agent...",
+            DisplayState::ServiceStopped => "Service stopped",
             DisplayState::ServiceLoadedNoModel => "No models loaded",
             DisplayState::ModelLoading => "Loading model...",
             DisplayState::ModelProcessingQueue => "Processing queue...",
@@ -57,6 +59,7 @@ impl DisplayState {
         match self {
             DisplayState::AgentNotLoaded => "grey",
             DisplayState::AgentStarting => "yellow",
+            DisplayState::ServiceStopped => "yellow",
             DisplayState::ServiceLoadedNoModel => "yellow",
             DisplayState::ModelLoading => "blue",
             DisplayState::ModelProcessingQueue => "green",

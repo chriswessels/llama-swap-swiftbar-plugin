@@ -97,6 +97,7 @@ pub fn get_display_state_icon(state: crate::state_model::DisplayState) -> &'stat
         DisplayState::ModelReady => &cache.model_ready,
         DisplayState::ModelLoading => &cache.model_loading,
         DisplayState::ServiceLoadedNoModel => &cache.service_no_model,
+        DisplayState::ServiceStopped => &cache.service_no_model,  // Same icon as stopped service
         DisplayState::AgentStarting => &cache.agent_starting,
         DisplayState::AgentNotLoaded => &cache.agent_not_loaded,
     }

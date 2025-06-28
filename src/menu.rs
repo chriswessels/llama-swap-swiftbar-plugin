@@ -55,7 +55,7 @@ static CONTROL_COMMANDS: &[MenuCommand] = &[
         icon: ":play.fill:",
         label: "Start Llama-Swap Service",
         action: "do_start",
-        states: &[DisplayState::ModelLoading, DisplayState::AgentStarting],
+        states: &[DisplayState::ServiceStopped],  // Fix: Available when stopped (ready to start)
     },
 ];
 
@@ -341,10 +341,14 @@ impl MenuBuilder {
                 if service_running { "Running" } else { "Stopped" }
             )).color(if service_running { "#34C759" } else { "#FF9500" }).unwrap()));
             
-            // Show install command if plist not installed
+            // Show plist management actions based on actual plist state
+            submenu.push(MenuItem::Sep);
             if !plist_installed {
-                submenu.push(MenuItem::Sep);
                 if let Ok(item) = INSTALL_COMMAND.create_item(exe_str) {
+                    submenu.push(MenuItem::Content(item));
+                }
+            } else {
+                if let Ok(item) = UNINSTALL_COMMAND.create_item(exe_str) {
                     submenu.push(MenuItem::Content(item));
                 }
             }
@@ -633,7 +637,8 @@ pub fn build_menu(state: &PluginState) -> crate::Result<String> {
     if matches!(display_state, 
         DisplayState::ModelProcessingQueue | 
         DisplayState::ModelReady | 
-        DisplayState::ServiceLoadedNoModel) {
+        DisplayState::ServiceLoadedNoModel |
+        DisplayState::ServiceStopped) {
         menu.add_system_metrics_section(&state.metrics_history);
         
         if let Some(ref all_metrics) = state.current_all_metrics {

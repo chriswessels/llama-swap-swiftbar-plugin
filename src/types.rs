@@ -225,7 +225,7 @@ impl PluginState {
         match self.agent_state {
             AgentState::NotReady { .. } => DisplayState::AgentNotLoaded,
             AgentState::Starting => DisplayState::AgentStarting,
-            AgentState::Stopped => DisplayState::AgentNotLoaded,
+            AgentState::Stopped => DisplayState::ServiceStopped,  // Fix: Ready to start
             AgentState::Running => {
                 if self.model_states.is_empty() {
                     DisplayState::ServiceLoadedNoModel
