@@ -73,7 +73,6 @@ impl DisplayState {
 pub enum PollingMode {
     Idle,    // 3s - no activity
     Active,  // 1s - active processing
-    Starting, // 2s - transitioning
 }
 
 impl PollingMode {
@@ -81,7 +80,6 @@ impl PollingMode {
         match self {
             PollingMode::Idle => Duration::from_secs(3),
             PollingMode::Active => Duration::from_secs(1),
-            PollingMode::Starting => Duration::from_secs(2),
         }
     }
     
@@ -89,7 +87,6 @@ impl PollingMode {
         match self {
             PollingMode::Idle => "Idle",
             PollingMode::Active => "Active", 
-            PollingMode::Starting => "Starting",
         }
     }
     
@@ -103,8 +100,8 @@ impl PollingMode {
         const STATE_CHANGE_DURATION: Duration = Duration::from_secs(5);
         
         match (state_changed, has_activity, last_change_elapsed < STATE_CHANGE_DURATION) {
-            (true, _, _) => PollingMode::Starting,  // Just changed
-            (_, _, true) => PollingMode::Starting,   // Recently changed
+            (true, _, _) => PollingMode::Active,  // Just changed
+            (_, _, true) => PollingMode::Active,   // Recently changed
             (_, true, _) => PollingMode::Active,     // Has activity
             _ => PollingMode::Idle,                  // No activity
         }

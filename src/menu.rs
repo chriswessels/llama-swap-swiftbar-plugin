@@ -269,18 +269,59 @@ impl MenuBuilder {
         }
         
         if has_llama_memory {
-            if let Some(item) = Self::create_metric(&MetricConfig {
-                name: "Llama Memory",
-                primary_data: &history.total_llama_memory_mb,
-                secondary_data: Some(&history.used_memory_gb),
-                chart_type: charts::MetricType::Memory,
-                format_fn: format_memory,
-                display_type: MetricDisplayType::LlamaMemory,
-                history: MetricHistory::System(history, "Llama Memory"),
-            }) {
-                self.items.push(item);
-            }
+            self.add_llama_process_breakdown(history);
         }
+    }
+    
+    fn add_llama_process_breakdown(&mut self, history: &AllMetricsHistory) {
+        let processes = crate::metrics::get_detailed_llama_processes();
+        
+        if processes.is_empty() {
+            return;
+        }
+        
+        let total_memory_mb: f64 = processes.iter().map(|p| p.memory_mb).sum();
+        
+        // Create main header item with chart
+        let header_text = format!("Llama Processes: {:.0} MB", total_memory_mb);
+        let mut header_item = ContentItem::new(header_text);
+        
+        // Add the memory trend chart
+        if !history.total_llama_memory_mb.is_empty() {
+            add_chart(&mut header_item, &history.total_llama_memory_mb, charts::MetricType::Memory);
+        }
+        
+        // Create submenu with process details
+        let mut submenu = Vec::new();
+        
+        for process in &processes {
+            let process_text = if let Some(ref model) = process.inferred_model {
+                format!("├─ {} ({}): {:.0} MB - {}", 
+                    process.name, 
+                    process.pid, 
+                    process.memory_mb, 
+                    model)
+            } else {
+                format!("├─ {} ({}): {:.0} MB", 
+                    process.name, 
+                    process.pid, 
+                    process.memory_mb)
+            };
+            
+            submenu.push(MenuItem::Content(ContentItem::new(process_text)));
+        }
+        
+        // Add total summary at the end
+        submenu.push(MenuItem::Sep);
+        submenu.push(MenuItem::Content(ContentItem::new(format!(
+            "Total: {:.0} MB across {} process{}",
+            total_memory_mb,
+            processes.len(),
+            if processes.len() == 1 { "" } else { "es" }
+        ))));
+        
+        header_item = header_item.sub(submenu);
+        self.items.push(MenuItem::Content(header_item));
     }
     
     fn create_metric(config: &MetricConfig) -> Option<MenuItem> {
@@ -540,9 +581,13 @@ fn build_submenu(
     
     // Range and statistics
     if insights.count > 1 {
-        submenu.push(MenuItem::Content(
-            ContentItem::new(format!("Range: {:.1} - {:.1}", insights.min, insights.max))
-        ));
+        let range_text = match display_type {
+            MetricDisplayType::SystemMemory => format!("Range: {:.1}% - {:.1}%", insights.min, insights.max),
+            MetricDisplayType::Simple => format!("Range: {:.1}% - {:.1}%", insights.min, insights.max),
+            MetricDisplayType::LlamaMemory => format!("Range: {:.0} MB - {:.0} MB", insights.min, insights.max),
+            MetricDisplayType::KvCache => format!("Range: {:.1}% - {:.1}%", insights.min, insights.max),
+        };
+        submenu.push(MenuItem::Content(ContentItem::new(range_text)));
         
         match display_type {
             MetricDisplayType::KvCache => {
@@ -552,13 +597,35 @@ fn build_submenu(
                 ));
             },
             MetricDisplayType::SystemMemory => {
+                // Add total system memory and available memory context
+                let total_system_memory_gb = calculate_total_system_memory(system_history.unwrap());
+                let current_used_gb = secondary_data.unwrap().back().unwrap().value;
+                let available_gb = total_system_memory_gb - current_used_gb;
+                
+                submenu.push(MenuItem::Content(
+                    ContentItem::new(format!("Total System: {:.1} GB", total_system_memory_gb))
+                ));
+                submenu.push(MenuItem::Content(
+                    ContentItem::new(format!("Available: {:.1} GB", available_gb))
+                ));
+                
+                // Add average with GB values
                 if let Some(secondary) = secondary_data {
                     if secondary.len() > 1 {
                         let gb_values: Vec<f64> = secondary.iter().map(|tv| tv.value).collect();
-                        let gb_min = gb_values.iter().fold(f64::INFINITY, |a, &b| a.min(b));
-                        let gb_max = gb_values.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+                        let gb_sum: f64 = gb_values.iter().sum();
+                        let gb_avg = gb_sum / gb_values.len() as f64;
+                        let avg_percent = (gb_avg / total_system_memory_gb) * 100.0;
+                        
                         submenu.push(MenuItem::Content(
-                            ContentItem::new(format!("GB Range: {gb_min:.1} - {gb_max:.1}"))
+                            ContentItem::new(format!("Average: {:.1}% ({:.1} GB)", avg_percent, gb_avg))
+                        ));
+                        
+                        let gb_max = gb_values.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+                        let max_percent = (gb_max / total_system_memory_gb) * 100.0;
+                        
+                        submenu.push(MenuItem::Content(
+                            ContentItem::new(format!("Peak: {:.1}% ({:.1} GB)", max_percent, gb_max))
                         ));
                     }
                 }

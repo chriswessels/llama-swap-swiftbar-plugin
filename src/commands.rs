@@ -79,8 +79,21 @@ fn restart_service() -> crate::Result<()> {
     eprintln!("Restarting Llama-Swap service...");
     
     ensure_service_installed()?;
-    stop_service()?;
-    start_service()
+    let service_context = ServiceContext::new()?;
+    
+    // Use kickstart -k to kill and restart the service atomically
+    let output = with_context(
+        run_launchctl_command("kickstart", &["-k", &service_context.service_target]),
+        "restart service"
+    )?;
+    
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("Failed to restart service: {stderr}").into());
+    }
+    
+    eprintln!("Service restarted successfully");
+    Ok(())
 }
 
 fn unload_models() -> crate::Result<()> {

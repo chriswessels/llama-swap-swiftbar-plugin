@@ -27,7 +27,7 @@ pub const COLOR_KV_CACHE_LINE: (u8, u8, u8) = (147, 112, 219); // Medium slate b
 // Program state color palette (RGB)
 pub const COLOR_BLUE: (u8, u8, u8) = (0, 122, 255);     // Processing/Active
 pub const COLOR_GREEN: (u8, u8, u8) = (52, 199, 89);    // Ready/Success
-pub const COLOR_YELLOW: (u8, u8, u8) = (255, 149, 0);   // Loading/Starting
+pub const COLOR_YELLOW: (u8, u8, u8) = (255, 255, 0);   // Loading/Starting
 pub const COLOR_GREY: (u8, u8, u8) = (142, 142, 147);   // Idle/No Model
 pub const COLOR_RED: (u8, u8, u8) = (255, 59, 48);      // Error/Not Loaded
 

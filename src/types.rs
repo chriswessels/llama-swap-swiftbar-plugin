@@ -260,22 +260,9 @@ impl PluginState {
             self.service_status.is_fully_running()
         );
         
-        // Handle Starting -> Running/Stopped transition after timeout
-        if let AgentState::Starting = self.agent_state {
-            if let Some(startup_time) = self.startup_time {
-                if startup_time.elapsed() >= Duration::from_secs(5) {
-                    self.agent_state = if self.service_status.is_fully_running() {
-                        AgentState::Running
-                    } else {
-                        AgentState::Stopped
-                    };
-                    self.startup_time = None;
-                }
-            }
-        } else if matches!(old_state, AgentState::Stopped) && matches!(new_state, AgentState::Running) {
-            // Transition through Starting state
-            self.agent_state = AgentState::Starting;
-            self.startup_time = Some(Instant::now());
+        if matches!(old_state, AgentState::Stopped) && matches!(new_state, AgentState::Running) {
+            // Direct transition to Running
+            self.agent_state = AgentState::Running;
         } else {
             self.agent_state = new_state;
         }

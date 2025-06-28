@@ -107,10 +107,26 @@ impl MetricStats {
                 let duration_secs = newest_timestamp.saturating_sub(oldest_timestamp);
                 let time_text = match duration_secs {
                     s if s < 60 => format!("{s}s"),
-                    s if s < 3600 => format!("{}m", s / 60),
-                    s => format!("{}h", s / 3600),
+                    s if s < 3600 => {
+                        let minutes = s / 60;
+                        let seconds = s % 60;
+                        if seconds == 0 {
+                            format!("{}m", minutes)
+                        } else {
+                            format!("{}m {}s", minutes, seconds)
+                        }
+                    },
+                    s => {
+                        let hours = s / 3600;
+                        let remaining_minutes = (s % 3600) / 60;
+                        if remaining_minutes == 0 {
+                            format!("{}h", hours)
+                        } else {
+                            format!("{}h {}m", hours, remaining_minutes)
+                        }
+                    }
                 };
-                format!("({time_text})")
+                format!("{} samples over {}", self.count, time_text)
             }
         }
     }

@@ -5,6 +5,15 @@ use crate::types::error_helpers::{with_context, CONNECT_API, PARSE_JSON};
 use std::time::Duration;
 use std::collections::HashMap;
 
+#[derive(Debug, Clone)]
+pub struct ProcessInfo {
+    pub pid: u32,
+    pub name: String,
+    pub memory_mb: f64,
+    pub command_line: String,
+    pub inferred_model: Option<String>,
+}
+
 #[derive(Debug)]
 struct PrometheusMetric {
     name: String,
@@ -60,8 +69,19 @@ fn parse_prometheus_metrics(text: &str) -> HashMap<String, f64> {
         ("llamacpp:n_decode_total", "n_decode_total"),
     ];
 
-    text.lines()
+    let parsed_metrics: Vec<_> = text.lines()
         .filter_map(parse_prometheus_line)
+        .collect();
+    
+    // Debug: Print all available metrics that contain "kv" or "cache"
+    for metric in &parsed_metrics {
+        if metric.name.to_lowercase().contains("kv") || metric.name.to_lowercase().contains("cache") {
+            eprintln!("Debug: Found KV/cache metric: {} = {}", metric.name, metric.value);
+        }
+    }
+    
+    parsed_metrics
+        .into_iter()
         .filter_map(|metric| {
             METRIC_MAPPINGS
                 .iter()
@@ -99,35 +119,95 @@ pub fn collect_system_metrics() -> SystemMetrics {
 }
 
 pub fn get_llama_server_memory_mb() -> f64 {
+    get_detailed_llama_processes()
+        .iter()
+        .map(|p| p.memory_mb)
+        .sum()
+}
+
+pub fn get_llama_cli_memory_mb() -> f64 {
+    get_detailed_llama_processes()
+        .iter()
+        .filter(|p| p.name == "llama-cli" || p.command_line.contains("llama-cli"))
+        .map(|p| p.memory_mb)
+        .sum()
+}
+
+pub fn get_detailed_llama_processes() -> Vec<ProcessInfo> {
     use sysinfo::System;
     
     let system = System::new_all();
-    let total_memory_bytes = system
+    system
         .processes()
         .values()
-        .filter(|process| {
-            let name = process.name().to_string_lossy();
+        .filter_map(|process| {
+            let name = process.name().to_string_lossy().to_string();
             let cmd_line = process.cmd().iter()
                 .map(|s| s.to_string_lossy())
                 .collect::<Vec<_>>()
                 .join(" ");
             
-            // Only match actual llama server binaries, not processes that mention them in paths
-            let name_matches = name == "llama-server" || name == "llama_server" || name == "llama-swap" || name == "llama-swap-swiftbar";
+            // Only match actual llama binaries, not processes that mention them in paths
+            let name_matches = name == "llama-server" || name == "llama-swap" || name == "llama-swap-swiftbar" || name == "llama-cli";
             let cmd_starts_with_llama = cmd_line.starts_with("llama-server") || 
-                                       cmd_line.starts_with("llama_server") || 
                                        cmd_line.starts_with("llama-swap") ||
+                                       cmd_line.starts_with("llama-cli") ||
                                        cmd_line.contains("/llama-server ") ||
-                                       cmd_line.contains("/llama_server ") ||
                                        cmd_line.contains("/llama-swap ") ||
+                                       cmd_line.contains("/llama-cli ") ||
                                        cmd_line.ends_with("llama-swap-swiftbar");
             
-            name_matches || cmd_starts_with_llama
+            if name_matches || cmd_starts_with_llama {
+                let memory_mb = process.memory() as f64 / (1024.0 * 1024.0);
+                let inferred_model = infer_model_from_command(&cmd_line);
+                
+                Some(ProcessInfo {
+                    pid: process.pid().as_u32(),
+                    name,
+                    memory_mb,
+                    command_line: cmd_line,
+                    inferred_model,
+                })
+            } else {
+                None
+            }
         })
-        .map(sysinfo::Process::memory)
-        .sum::<u64>();
+        .collect()
+}
+
+fn infer_model_from_command(cmd_line: &str) -> Option<String> {
+    // Extract model name from --model argument
+    if let Some(model_start) = cmd_line.find("--model ") {
+        let model_part = &cmd_line[model_start + 8..];
+        if let Some(model_end) = model_part.find(' ') {
+            let model_path = &model_part[..model_end];
+            // Extract just the model name from the path
+            if let Some(filename) = model_path.split('/').last() {
+                // Remove .gguf extension if present
+                let model_name = filename.strip_suffix(".gguf").unwrap_or(filename);
+                return Some(model_name.to_string());
+            }
+        } else {
+            // Model is the last argument
+            if let Some(filename) = model_part.split('/').last() {
+                let model_name = filename.strip_suffix(".gguf").unwrap_or(filename);
+                return Some(model_name.to_string());
+            }
+        }
+    }
     
-    total_memory_bytes as f64 / (1024.0 * 1024.0)
+    // Extract port for identification
+    if let Some(port_start) = cmd_line.find("--port ") {
+        let port_part = &cmd_line[port_start + 7..];
+        if let Some(port_end) = port_part.find(' ') {
+            let port = &port_part[..port_end];
+            return Some(format!("Port {}", port));
+        } else if !port_part.is_empty() {
+            return Some(format!("Port {}", port_part.trim()));
+        }
+    }
+    
+    None
 }
 
 fn fetch_model_metrics(client: &Client, model: &RunningModel) -> HashMap<String, f64> {
@@ -149,15 +229,41 @@ fn fetch_model_metrics(client: &Client, model: &RunningModel) -> HashMap<String,
         .unwrap_or_default()
 }
 
-fn create_metrics_from_data(data: &HashMap<String, f64>) -> Metrics {
+fn create_metrics_from_data(data: &HashMap<String, f64>, client: &Client, model_id: &str) -> Metrics {
+    let n_decode_total = get_metric_value(data, "n_decode_total") as u32;
+    
+    // Estimate KV cache usage from decode calls
+    // Each decode call adds one token to the cache
+    let requests_active = get_metric_value(data, "requests_processing") as u32 + 
+                         get_metric_value(data, "requests_deferred") as u32;
+    
+    // Estimate current KV cache tokens based on activity
+    // If processing/deferred requests exist, assume cache contains recent decode tokens
+    let estimated_kv_tokens = if requests_active > 0 {
+        // Conservative estimate: assume recent activity keeps cache warm
+        // Use a portion of total decodes, capped at reasonable context window usage
+        std::cmp::min(n_decode_total / 4, 32768) // Max 32k tokens cached
+    } else {
+        // No active requests, minimal cache
+        std::cmp::min(n_decode_total / 10, 1024) // Small residual cache
+    };
+    
+    // Get actual context size from model metadata
+    let context_size = get_model_context_size(client, model_id);
+    let kv_cache_usage_ratio = if context_size > 0 {
+        estimated_kv_tokens as f64 / context_size as f64
+    } else {
+        0.0
+    };
+    
     Metrics {
         prompt_tokens_per_sec: get_metric_value(data, "prompt_tokens_per_sec"),
         predicted_tokens_per_sec: get_metric_value(data, "predicted_tokens_per_sec"),
-        requests_processing: get_metric_value(data, "requests_processing") as u32,
+        requests_processing: requests_active,
         requests_deferred: get_metric_value(data, "requests_deferred") as u32,
-        kv_cache_usage_ratio: get_metric_value(data, "kv_cache_usage_ratio"),
-        kv_cache_tokens: get_metric_value(data, "kv_cache_tokens") as u32,
-        n_decode_total: get_metric_value(data, "n_decode_total") as u32,
+        kv_cache_usage_ratio,
+        kv_cache_tokens: estimated_kv_tokens,
+        n_decode_total,
         memory_mb: 0.0,
     }
 }
@@ -189,7 +295,7 @@ pub fn fetch_all_metrics(client: &Client) -> crate::Result<AllMetrics> {
             let model_state = model.model_state();
             let metrics = if model_state == crate::models::ModelState::Running {
                 let model_metrics_data = fetch_model_metrics(client, model);
-                create_metrics_from_data(&model_metrics_data)
+                create_metrics_from_data(&model_metrics_data, client, &model.model)
             } else {
                 // For loading/unknown models, use empty metrics
                 Metrics::default()
@@ -225,6 +331,33 @@ fn percentage(value: u64, total: u64) -> f64 {
 
 fn get_metric_value(data: &HashMap<String, f64>, key: &str) -> f64 {
     *data.get(key).unwrap_or(&0.0)
+}
+
+fn get_model_context_size(client: &Client, model_id: &str) -> u32 {
+    let url = format!(
+        "{}:{}/upstream/{}/v1/models", 
+        constants::API_BASE_URL, 
+        constants::API_PORT,
+        model_id.replace(':', "%3A")
+    );
+    
+    client
+        .get(&url)
+        .timeout(Duration::from_millis(500))
+        .send()
+        .ok()
+        .filter(|response| response.status().is_success())
+        .and_then(|response| response.json::<serde_json::Value>().ok())
+        .and_then(|json| {
+            // Parse the model metadata to get n_ctx_train
+            json.get("data")?
+                .as_array()?
+                .first()?
+                .get("meta")?
+                .get("n_ctx_train")?
+                .as_u64()
+        })
+        .unwrap_or(32768) as u32 // Default to 32k if we can't fetch it
 }
 
 #[cfg(test)]
