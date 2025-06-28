@@ -1,21 +1,12 @@
 use bitbar::{Menu, MenuItem, ContentItem, attr};
 use crate::{icons, charts};
-use crate::models::{AllMetricsHistory, AllMetrics, MetricsHistory, TimestampedValue};
+use crate::models::{AllMetricsHistory, MetricsHistory, TimestampedValue};
 use crate::state_machines::program::ProgramStates;
 use crate::state_machines::agent::AgentStates;
-use reqwest::blocking::Client;
 use std::collections::VecDeque;
 
-pub struct PluginState {
-    #[allow(dead_code)]
-    pub http_client: Client,
-    pub metrics_history: AllMetricsHistory,
-    pub current_all_metrics: Option<AllMetrics>,
-    pub current_program_state: ProgramStates,
-    pub current_agent_state: AgentStates,
-    #[allow(dead_code)]
-    pub error_count: usize,
-}
+// Use the shared PluginState
+use crate::types::PluginState;
 
 #[derive(Clone)]
 enum MetricDisplayType {
@@ -469,9 +460,11 @@ fn calculate_stats_for_data(data: &VecDeque<TimestampedValue>) -> crate::models:
 pub fn build_menu(state: &PluginState) -> crate::Result<String> {
     let mut menu = MenuBuilder::new();
     
-    menu.add_title(state.current_program_state);
+    let current_program_state = state.program_state_machine.state().clone();
+    
+    menu.add_title(current_program_state);
     menu.add_separator();
-    menu.add_status_message(state.current_program_state);
+    menu.add_status_message(current_program_state);
     menu.add_separator();
     
     let has_models = state.current_all_metrics
@@ -479,7 +472,7 @@ pub fn build_menu(state: &PluginState) -> crate::Result<String> {
         .map(|m| !m.models.is_empty())
         .unwrap_or(false);
     
-    if matches!(state.current_program_state, 
+    if matches!(current_program_state, 
         ProgramStates::ModelProcessingQueue | 
         ProgramStates::ModelReady | 
         ProgramStates::ServiceLoadedNoModel) {
@@ -498,7 +491,7 @@ pub fn build_menu(state: &PluginState) -> crate::Result<String> {
     }
     
     menu.add_separator();
-    menu.add_settings_section(state.current_program_state, has_models);
+    menu.add_settings_section(current_program_state, has_models);
     
     let built_menu = menu.build();
     Ok(built_menu.to_string())
@@ -529,18 +522,30 @@ mod tests {
     
     #[test]
     fn test_menu_with_running_service() {
-        let state = create_test_state(ProgramStates::ModelReady);
+        let state = create_test_state_for_running_service();
+        
+        // Verify the state machines are in the expected states
+        assert!(matches!(state.agent_state_machine.state(), AgentStates::Running));
+        assert!(matches!(state.program_state_machine.state(), ProgramStates::ModelReady));
+        
         let menu_str = build_menu(&state).unwrap();
         
+        // When service is running and models are ready, should show stop options
         assert!(menu_str.contains("Stop Llama-Swap Service"));
         assert!(!menu_str.contains("Start Llama-Swap Service"));
     }
     
     #[test]
     fn test_menu_with_stopped_service() {
-        let state = create_test_state(ProgramStates::AgentNotLoaded);
+        let state = create_test_state_for_stopped_service();
+        
+        // Verify the state machines are in the expected states
+        assert!(matches!(state.agent_state_machine.state(), AgentStates::NotInstalled));
+        assert!(matches!(state.program_state_machine.state(), ProgramStates::AgentNotLoaded));
+        
         let menu_str = build_menu(&state).unwrap();
         
+        // When service is stopped, should show start options
         assert!(menu_str.contains("Start Llama-Swap Service"));
         assert!(!menu_str.contains("Stop Llama-Swap Service"));
     }
@@ -555,14 +560,86 @@ mod tests {
     }
     
     
-    fn create_test_state(program_state: ProgramStates) -> PluginState {
-        PluginState {
-            http_client: reqwest::blocking::Client::new(),
-            current_program_state: program_state,
-            current_agent_state: AgentStates::Running,
-            metrics_history: AllMetricsHistory::new(),
-            current_all_metrics: None,
-            error_count: 0,
-        }
+    fn create_test_state_for_running_service() -> PluginState {
+        use crate::state_machines::agent::{AgentEvents, ServiceRunning};
+        use crate::state_machines::program::{ProgramEvents, AgentUpdate, ModelUpdate};
+        use crate::models::{AllMetrics, ModelMetrics, ModelState, Metrics};
+        
+        let mut state = PluginState::new().unwrap();
+        
+        // Step 1: Drive agent state machine to Running state
+        // Simulate service being detected as running
+        let _ = state.agent_state_machine.process_event(AgentEvents::ServiceDetected(ServiceRunning(true)));
+        // Simulate startup timeout to transition to Running
+        let _ = state.agent_state_machine.process_event(AgentEvents::StartupComplete(crate::state_machines::agent::StartupTimeout));
+        
+        // Step 2: Drive program state machine by feeding it the running agent state
+        let agent_state = state.agent_state_machine.state().clone();
+        let _ = state.program_state_machine.process_event(ProgramEvents::AgentStateChanged(AgentUpdate(agent_state)));
+        
+        // Step 3: Simulate having models loaded and ready (ModelReady state)
+        let model_update = ModelUpdate {
+            has_models: true,
+            has_loading: false,
+            has_activity: false,
+        };
+        let _ = state.program_state_machine.process_event(ProgramEvents::ModelStateChanged(model_update));
+        
+        // Step 4: Set up some dummy metrics to make the state consistent
+        let dummy_metrics = AllMetrics {
+            models: vec![ModelMetrics {
+                model_name: "test-model".to_string(),
+                model_state: ModelState::Running,
+                metrics: Metrics {
+                    prompt_tokens_per_sec: 10.0,
+                    predicted_tokens_per_sec: 15.0,
+                    requests_processing: 0,
+                    requests_deferred: 0,
+                    kv_cache_usage_ratio: 0.5,
+                    kv_cache_tokens: 256,
+                    n_decode_total: 100,
+                    memory_mb: 1000.0,
+                },
+            }],
+            total_llama_memory_mb: 1000.0,
+            system_metrics: crate::models::SystemMetrics {
+                cpu_usage_percent: 25.0,
+                total_memory_gb: 16.0,
+                used_memory_gb: 8.0,
+                available_memory_gb: 8.0,
+                memory_usage_percent: 50.0,
+            },
+        };
+        state.current_all_metrics = Some(dummy_metrics);
+        
+        state
+    }
+    
+    fn create_test_state_for_stopped_service() -> PluginState {
+        use crate::state_machines::agent::{AgentEvents, ServiceRunning};
+        use crate::state_machines::program::{ProgramEvents, AgentUpdate, ModelUpdate};
+        
+        let mut state = PluginState::new().unwrap();
+        
+        // Step 1: Keep agent in stopped/not-installed state by not sending service running events
+        // The agent starts in NotInstalled state, and without ServiceDetected(true), it stays there
+        let _ = state.agent_state_machine.process_event(AgentEvents::ServiceDetected(ServiceRunning(false)));
+        
+        // Step 2: Drive program state machine with the stopped agent state
+        let agent_state = state.agent_state_machine.state().clone();
+        let _ = state.program_state_machine.process_event(ProgramEvents::AgentStateChanged(AgentUpdate(agent_state)));
+        
+        // Step 3: No models since service is not running
+        let model_update = ModelUpdate {
+            has_models: false,
+            has_loading: false,
+            has_activity: false,
+        };
+        let _ = state.program_state_machine.process_event(ProgramEvents::ModelStateChanged(model_update));
+        
+        // No metrics since service is stopped
+        state.current_all_metrics = None;
+        
+        state
     }
 }

@@ -8,9 +8,9 @@ pub mod metrics;
 pub mod models;
 pub mod service;
 pub mod state_machines;
+pub mod types;
 
-// Re-export error type
-pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+// Re-export error type is now in types module
 
 // Re-export commonly used types
 pub use crate::models::{
@@ -29,3 +29,6 @@ pub use crate::state_machines::{
     polling_mode::{PollingModeStates, PollingModeStateMachine},
     model::{ModelStates, ModelStateMachine},
 };
+
+// Re-export main types
+pub use crate::types::{PluginState, Result};
