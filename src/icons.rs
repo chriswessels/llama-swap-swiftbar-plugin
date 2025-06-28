@@ -70,20 +70,22 @@ fn create_themed_status_icon(light_base: &RgbaImage, dark_base: &RgbaImage, colo
     // Create light version
     let mut light_icon = light_base.clone();
     draw_status_dot(&mut light_icon, color);
-    let light_png = encode_rgba_to_png(&light_icon)?;
+    let light_b64 = rgba_to_base64(&light_icon)?;
     
     // Create dark version
     let mut dark_icon = dark_base.clone();
     draw_status_dot(&mut dark_icon, color);
-    let dark_png = encode_rgba_to_png(&dark_icon)?;
+    let dark_b64 = rgba_to_base64(&dark_icon)?;
     
-    // ── turn the raw bytes into text ─────────────────────────────
-    let light_b64 = B64.encode(&light_png);  // String
-    let dark_b64  = B64.encode(&dark_png);   // String
-
     // one comma → SwiftBar shows first in Light Mode, second in Dark Mode
     let themed_image_data = format!("{light_b64},{dark_b64}");
     Ok(bitbar::attr::Image::from(themed_image_data))
+}
+
+/// Convert RGBA image to base64 PNG string (helper)
+fn rgba_to_base64(rgba: &RgbaImage) -> crate::Result<String> {
+    let buffer = encode_rgba_to_png(rgba)?;
+    Ok(B64.encode(&buffer))
 }
 
 /// Get cached program state icon image
@@ -102,7 +104,12 @@ pub fn get_program_state_icon(state: ProgramStates) -> &'static bitbar::attr::Im
 
 /// Convert chart image to menu image (for charts only)
 pub fn chart_to_menu_image(chart: DynamicImage) -> crate::Result<bitbar::attr::Image> {
-    let buffer = encode_rgba_to_png(&chart.to_rgba8())?;
+    rgba_to_menu_image(&chart.to_rgba8())
+}
+
+/// Convert RGBA image to menu image (common helper)
+fn rgba_to_menu_image(rgba: &RgbaImage) -> crate::Result<bitbar::attr::Image> {
+    let buffer = encode_rgba_to_png(rgba)?;
     let b64_data = B64.encode(&buffer);
     Ok(bitbar::attr::Image::from(b64_data))
 }
