@@ -11,6 +11,34 @@ use std::time::Duration;
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
+/// Error helper functions to reduce boilerplate
+pub mod error_helpers {
+    use super::Result;
+    
+    /// Convert any error to our Result type with a context message
+    pub fn with_context<T, E: std::fmt::Display>(
+        result: std::result::Result<T, E>,
+        context: &str,
+    ) -> Result<T> {
+        result.map_err(|e| format!("{context}: {e}").into())
+    }
+    
+    /// Get HOME directory or return error
+    pub fn get_home_dir() -> Result<String> {
+        std::env::var("HOME").map_err(|_| "Failed to get HOME directory".into())
+    }
+    
+    /// Common error contexts
+    pub const CONNECT_API: &str = "Failed to connect to API";
+    pub const PARSE_JSON: &str = "Failed to parse JSON";
+    pub const START_SERVICE: &str = "Failed to start service";
+    pub const STOP_SERVICE: &str = "Failed to stop service";
+    pub const GET_USER_ID: &str = "Failed to get user ID";
+    pub const CREATE_DIR: &str = "Failed to create directory";
+    pub const CREATE_FILE: &str = "Failed to create file";
+    pub const EXEC_COMMAND: &str = "Failed to execute command";
+}
+
 pub struct PluginState {
     pub http_client: Client,
     pub metrics_history: AllMetricsHistory,
@@ -52,7 +80,7 @@ impl PluginState {
     }
     
     pub fn update_polling_mode(&mut self) {
-        let old_state = self.polling_mode_state_machine.state().clone();
+        let old_state = *self.polling_mode_state_machine.state();
         
         // Always send state change detection event - the state machine will handle transition timing
         let _ = self.polling_mode_state_machine.process_event(PollingModeEvents::StateChangeDetected(StateChange));
@@ -61,7 +89,7 @@ impl PluginState {
         let has_activity = self.has_queue_activity();
         let _ = self.polling_mode_state_machine.process_event(PollingModeEvents::ActivityCheck(QueueActivity(has_activity)));
         
-        let new_state = self.polling_mode_state_machine.state().clone();
+        let new_state = *self.polling_mode_state_machine.state();
         if new_state != old_state {
             eprintln!("Polling mode: {} -> {} ({})", 
                 old_state.description(),
@@ -74,7 +102,7 @@ impl PluginState {
     pub fn has_queue_activity(&self) -> bool {
         self.current_all_metrics
             .as_ref()
-            .map_or(false, |all_metrics| {
+            .is_some_and(|all_metrics| {
                 all_metrics.models.iter().any(|model| {
                     model.metrics.requests_processing > 0 || model.metrics.requests_deferred > 0
                 })
@@ -91,8 +119,8 @@ impl PluginState {
             );
             
             match (total_processing, total_deferred) {
-                (p, _) if p > 0 => format!("processing {} requests", p),
-                (_, d) if d > 0 => format!("{} requests queued", d),
+                (p, _) if p > 0 => format!("processing {p} requests"),
+                (_, d) if d > 0 => format!("{d} requests queued"),
                 _ => "no queue activity".to_string(),
             }
         } else {
@@ -115,7 +143,7 @@ impl PluginState {
     
     pub fn update_agent_state(&mut self) {
         let is_service_running = service::is_service_running();
-        let old_state = self.agent_state_machine.state().clone();
+        let old_state = *self.agent_state_machine.state();
         
         // Send service detection event to state machine
         let _ = self.agent_state_machine.process_event(AgentEvents::ServiceDetected(ServiceRunning(is_service_running)));
@@ -127,9 +155,9 @@ impl PluginState {
             }
         }
         
-        let new_state = self.agent_state_machine.state().clone();
+        let new_state = *self.agent_state_machine.state();
         if new_state != old_state {
-            eprintln!("Agent state: {:?} -> {:?}", old_state, new_state);
+            eprintln!("Agent state: {old_state:?} -> {new_state:?}");
         }
     }
     
@@ -146,14 +174,14 @@ impl PluginState {
     }
     
     pub fn handle_metrics_error(&mut self, error: Box<dyn Error>) {
-        eprintln!("Metrics fetch failed: {}", error);
+        eprintln!("Metrics fetch failed: {error}");
         self.error_count += 1;
         
         // Clear model state machines on error
         self.model_state_machines.clear();
         
         // Update program state machine with agent state only (no models)
-        let agent_state = self.agent_state_machine.state().clone();
+        let agent_state = *self.agent_state_machine.state();
         let _ = self.program_state_machine.process_event(ProgramEvents::AgentStateChanged(AgentUpdate(agent_state)));
         
         // Update with empty model state
@@ -194,7 +222,7 @@ impl PluginState {
     
     pub fn update_program_state_machine(&mut self, all_metrics: &AllMetrics) {
         // Update with agent state
-        let agent_state = self.agent_state_machine.state().clone();
+        let agent_state = *self.agent_state_machine.state();
         let _ = self.program_state_machine.process_event(ProgramEvents::AgentStateChanged(AgentUpdate(agent_state)));
         
         // Determine model summary

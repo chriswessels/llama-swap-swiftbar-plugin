@@ -1,5 +1,6 @@
 use std::process::Command;
 use crate::constants::LAUNCH_AGENT_LABEL;
+use crate::types::error_helpers::{with_context, get_home_dir, CONNECT_API, START_SERVICE, STOP_SERVICE, GET_USER_ID, CREATE_DIR, CREATE_FILE, EXEC_COMMAND};
 
 pub fn handle_command(command: &str) -> crate::Result<()> {
     match command {
@@ -9,7 +10,7 @@ pub fn handle_command(command: &str) -> crate::Result<()> {
         "do_unload" => unload_models(),
         "view_logs" => view_file(crate::constants::LOG_FILE_PATH, create_default_log),
         "view_config" => view_file(crate::constants::CONFIG_FILE_PATH, create_default_config),
-        _ => Err(format!("Unknown command: {}", command).into()),
+        _ => Err(format!("Unknown command: {command}").into()),
     }
 }
 
@@ -24,12 +25,14 @@ fn start_service() -> crate::Result<()> {
     let _ = run_launchctl_command("bootstrap", &[&service_context.target_domain, &service_context.plist_path]);
     
     // The final kickstart command is critical
-    let output = run_launchctl_command("kickstart", &["-kp", &service_context.service_target])
-        .map_err(|e| format!("Failed to start service: {}", e))?;
+    let output = with_context(
+        run_launchctl_command("kickstart", &["-kp", &service_context.service_target]),
+        START_SERVICE
+    )?;
     
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Failed to start service: {}", stderr).into());
+        return Err(format!("Failed to start service: {stderr}").into());
     }
     
     eprintln!("Service started successfully");
@@ -42,14 +45,16 @@ fn stop_service() -> crate::Result<()> {
     ensure_service_installed()?;
     let service_context = ServiceContext::new()?;
     
-    let output = run_launchctl_command("bootout", &[&service_context.service_target])
-        .map_err(|e| format!("Failed to stop service: {}", e))?;
+    let output = with_context(
+        run_launchctl_command("bootout", &[&service_context.service_target]),
+        STOP_SERVICE
+    )?;
     
     // bootout can return non-zero if service wasn't running, but that's ok
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         if !stderr.contains("No such process") {
-            return Err(format!("Failed to stop service: {}", stderr).into());
+            return Err(format!("Failed to stop service: {stderr}").into());
         }
     }
     
@@ -71,11 +76,13 @@ fn unload_models() -> crate::Result<()> {
     let client = reqwest::blocking::Client::new();
     let url = format!("{}:{}/unload", crate::constants::API_BASE_URL, crate::constants::API_PORT);
     
-    let response = client
-        .get(&url)
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .map_err(|e| format!("Failed to connect to API: {}", e))?;
+    let response = with_context(
+        client
+            .get(&url)
+            .timeout(std::time::Duration::from_secs(10))
+            .send(),
+        CONNECT_API
+    )?;
     
     if response.status().is_success() {
         eprintln!("Models unloaded successfully");
@@ -90,14 +97,16 @@ fn view_file(file_path: &str, default_content_fn: fn() -> &'static str) -> crate
     
     ensure_file_exists(&expanded_path, default_content_fn)?;
     
-    let output = Command::new("open")
-        .args(&["-t", &expanded_path])
-        .output()
-        .map_err(|e| format!("Failed to execute open command: {}", e))?;
+    let output = with_context(
+        Command::new("open")
+            .args(["-t", &expanded_path])
+            .output(),
+        EXEC_COMMAND
+    )?;
     
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Failed to open file: {}", stderr).into());
+        return Err(format!("Failed to open file: {stderr}").into());
     }
     
     Ok(())
@@ -114,8 +123,8 @@ struct ServiceContext {
 impl ServiceContext {
     fn new() -> crate::Result<Self> {
         let user_id = get_user_id()?;
-        let target_domain = format!("gui/{}", user_id);
-        let service_target = format!("{}/{}", target_domain, LAUNCH_AGENT_LABEL);
+        let target_domain = format!("gui/{user_id}");
+        let service_target = format!("{target_domain}/{LAUNCH_AGENT_LABEL}");
         let plist_path = get_plist_path()?;
         
         Ok(Self {
@@ -140,13 +149,11 @@ fn ensure_file_exists(path: &str, default_content_fn: fn() -> &'static str) -> c
     
     // Create parent directory if needed
     if let Some(parent) = std::path::Path::new(path).parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create directory: {}", e))?;
+        with_context(std::fs::create_dir_all(parent), CREATE_DIR)?;
     }
     
     // Create file with default content
-    std::fs::write(path, default_content_fn())
-        .map_err(|e| format!("Failed to create file: {}", e))?;
+    with_context(std::fs::write(path, default_content_fn()), CREATE_FILE)?;
     
     Ok(())
 }
@@ -159,10 +166,12 @@ fn run_launchctl_command(subcommand: &str, args: &[&str]) -> Result<std::process
 }
 
 fn get_user_id() -> crate::Result<String> {
-    let output = Command::new("id")
-        .arg("-u")
-        .output()
-        .map_err(|e| format!("Failed to get user ID: {}", e))?;
+    let output = with_context(
+        Command::new("id")
+            .arg("-u")
+            .output(),
+        GET_USER_ID
+    )?;
     
     if !output.status.success() {
         return Err("Failed to get user ID".into());
@@ -177,15 +186,13 @@ fn is_service_installed() -> crate::Result<bool> {
 }
 
 fn get_plist_path() -> crate::Result<String> {
-    let home = std::env::var("HOME")
-        .map_err(|_| "Failed to get HOME directory")?;
-    Ok(format!("{}/Library/LaunchAgents/{}.plist", home, LAUNCH_AGENT_LABEL))
+    let home = get_home_dir()?;
+    Ok(format!("{home}/Library/LaunchAgents/{LAUNCH_AGENT_LABEL}.plist"))
 }
 
 fn expand_tilde(path: &str) -> crate::Result<String> {
     if path.starts_with("~/") {
-        let home = std::env::var("HOME")
-            .map_err(|_| "Failed to get HOME directory")?;
+        let home = get_home_dir()?;
         Ok(path.replacen("~", &home, 1))
     } else {
         Ok(path.to_string())

@@ -33,6 +33,12 @@ pub struct AgentContext {
     pub startup_timeout: Duration,
 }
 
+impl Default for AgentContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AgentContext {
     pub fn new() -> Self {
         Self {

@@ -38,6 +38,12 @@ pub struct PollingModeContext {
     pub current_activity: bool,
 }
 
+impl Default for PollingModeContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PollingModeContext {
     pub fn new() -> Self {
         Self {

@@ -34,17 +34,17 @@ fn main() {
 
 fn setup_panic_handler() {
     std::panic::set_hook(Box::new(|panic_info| {
-        eprintln!("Plugin panic: {:?}", panic_info);
+        eprintln!("Plugin panic: {panic_info:?}");
         if let Ok(menu) = menu::build_error_menu("Plugin encountered an error") {
-            print!("{}", menu);
+            print!("{menu}");
         }
     }));
 }
 
 fn handle_error(error: Box<dyn Error>) {
-    eprintln!("Plugin error: {:?}", error);
-    if let Ok(menu) = menu::build_error_menu(&format!("Error: {}", error)) {
-        print!("{}", menu);
+    eprintln!("Plugin error: {error:?}");
+    if let Ok(menu) = menu::build_error_menu(&format!("Error: {error}")) {
+        print!("{menu}");
     }
     std::process::exit(1);
 }
@@ -73,7 +73,7 @@ fn run_streaming_mode() -> Result<()> {
         let loop_start = Instant::now();
         
         let frame = render_frame(&mut state)?;
-        print!("~~~\n{}", frame);
+        print!("~~~\n{frame}");
         io::stdout().flush()?;
         
         let sleep_duration = Duration::from_secs(state.polling_mode_state_machine.state().interval_secs());
@@ -89,7 +89,7 @@ fn run_streaming_mode() -> Result<()> {
 fn run_once() -> Result<()> {
     let mut state = PluginState::new()?;
     let frame = render_frame(&mut state)?;
-    print!("{}", frame);
+    print!("{frame}");
     Ok(())
 }
 

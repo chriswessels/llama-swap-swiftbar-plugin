@@ -30,6 +30,12 @@ statemachine! {
 
 pub struct ModelContext;
 
+impl Default for ModelContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ModelContext {
     pub fn new() -> Self {
         Self

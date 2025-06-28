@@ -1,6 +1,7 @@
 use reqwest::blocking::Client;
 use crate::models::{Metrics, RunningResponse, RunningModel, AllMetrics, ModelMetrics, SystemMetrics};
 use crate::constants;
+use crate::types::error_helpers::{with_context, CONNECT_API, PARSE_JSON};
 use std::time::Duration;
 use std::collections::HashMap;
 
@@ -156,18 +157,19 @@ fn create_metrics_from_data(data: &HashMap<String, f64>) -> crate::Result<Metric
 pub fn fetch_all_metrics(client: &Client) -> crate::Result<AllMetrics> {
     let url = format!("{}:{}/running", constants::API_BASE_URL, constants::API_PORT);
     
-    let response = client
-        .get(&url)
-        .send()
-        .map_err(|e| format!("Failed to connect to API: {}", e))?;
+    let response = with_context(
+        client.get(&url).send(),
+        CONNECT_API
+    )?;
     
     if !response.status().is_success() {
         return Err(format!("API returned error: {}", response.status()).into());
     }
     
-    let running_response: RunningResponse = response
-        .json()
-        .map_err(|e| format!("Failed to parse running models JSON: {}", e))?;
+    let running_response: RunningResponse = with_context(
+        response.json(),
+        PARSE_JSON
+    )?;
     
     let llama_memory_mb = get_llama_server_memory_mb();
     let system_metrics = collect_system_metrics();

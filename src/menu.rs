@@ -106,6 +106,16 @@ enum MetricHistory<'a> {
     System(&'a AllMetricsHistory, &'static str),
 }
 
+struct MetricConfig<'a> {
+    name: &'a str,
+    primary_data: &'a VecDeque<TimestampedValue>,
+    secondary_data: Option<&'a VecDeque<TimestampedValue>>,
+    chart_type: charts::MetricType,
+    format_fn: fn(f64) -> String,
+    display_type: MetricDisplayType,
+    history: MetricHistory<'a>,
+}
+
 impl<'a> MetricHistory<'a> {
     fn get_stats(&self, primary_data: &VecDeque<TimestampedValue>) -> crate::models::MetricStats {
         match self {
@@ -164,15 +174,39 @@ impl MenuBuilder {
     fn add_model_metrics_section(&mut self, model_name: &str, history: &MetricsHistory, current_metrics: &crate::models::Metrics) {
         self.add_header(model_name);
         
-        if let Some(item) = self.create_metric("Prompt Processing", &history.prompt_tps, None, charts::MetricType::Prompt, format_tps, MetricDisplayType::Simple, MetricHistory::Model(history)) {
+        if let Some(item) = self.create_metric(MetricConfig {
+            name: "Prompt Processing",
+            primary_data: &history.prompt_tps,
+            secondary_data: None,
+            chart_type: charts::MetricType::Prompt,
+            format_fn: format_tps,
+            display_type: MetricDisplayType::Simple,
+            history: MetricHistory::Model(history),
+        }) {
             self.items.push(item);
         }
 
-        if let Some(item) = self.create_metric("Generation", &history.tps, None, charts::MetricType::Tps, format_tps, MetricDisplayType::Simple, MetricHistory::Model(history)) {
+        if let Some(item) = self.create_metric(MetricConfig {
+            name: "Generation",
+            primary_data: &history.tps,
+            secondary_data: None,
+            chart_type: charts::MetricType::Tps,
+            format_fn: format_tps,
+            display_type: MetricDisplayType::Simple,
+            history: MetricHistory::Model(history),
+        }) {
             self.items.push(item);
         }
         
-        if let Some(item) = self.create_metric("KV Cache", &history.kv_cache_percent, Some(&history.kv_cache_tokens), charts::MetricType::KvCache, format_percent, MetricDisplayType::KvCache, MetricHistory::Model(history)) {
+        if let Some(item) = self.create_metric(MetricConfig {
+            name: "KV Cache",
+            primary_data: &history.kv_cache_percent,
+            secondary_data: Some(&history.kv_cache_tokens),
+            chart_type: charts::MetricType::KvCache,
+            format_fn: format_percent,
+            display_type: MetricDisplayType::KvCache,
+            history: MetricHistory::Model(history),
+        }) {
             self.items.push(item);
         }
         
@@ -183,44 +217,59 @@ impl MenuBuilder {
         self.add_header("System Metrics");
         
         if !history.cpu_usage_percent.is_empty() {
-            if let Some(item) = self.create_metric("CPU", &history.cpu_usage_percent, None, charts::MetricType::Tps, format_percent, MetricDisplayType::Simple, MetricHistory::System(history, "CPU")) {
+            if let Some(item) = self.create_metric(MetricConfig {
+                name: "CPU",
+                primary_data: &history.cpu_usage_percent,
+                secondary_data: None,
+                chart_type: charts::MetricType::Tps,
+                format_fn: format_percent,
+                display_type: MetricDisplayType::Simple,
+                history: MetricHistory::System(history, "CPU"),
+            }) {
                 self.items.push(item);
             }
         }
         
         if !history.memory_usage_percent.is_empty() && !history.used_memory_gb.is_empty() {
-            if let Some(item) = self.create_metric("Memory", &history.memory_usage_percent, Some(&history.used_memory_gb), charts::MetricType::Memory, format_percent, MetricDisplayType::SystemMemory, MetricHistory::System(history, "Memory")) {
+            if let Some(item) = self.create_metric(MetricConfig {
+                name: "Memory",
+                primary_data: &history.memory_usage_percent,
+                secondary_data: Some(&history.used_memory_gb),
+                chart_type: charts::MetricType::Memory,
+                format_fn: format_percent,
+                display_type: MetricDisplayType::SystemMemory,
+                history: MetricHistory::System(history, "Memory"),
+            }) {
                 self.items.push(item);
             }
         }
         
         if !history.total_llama_memory_mb.is_empty() && !history.used_memory_gb.is_empty() {
-            if let Some(item) = self.create_metric("Llama Memory", &history.total_llama_memory_mb, Some(&history.used_memory_gb), charts::MetricType::Memory, format_memory, MetricDisplayType::LlamaMemory, MetricHistory::System(history, "Llama Memory")) {
+            if let Some(item) = self.create_metric(MetricConfig {
+                name: "Llama Memory",
+                primary_data: &history.total_llama_memory_mb,
+                secondary_data: Some(&history.used_memory_gb),
+                chart_type: charts::MetricType::Memory,
+                format_fn: format_memory,
+                display_type: MetricDisplayType::LlamaMemory,
+                history: MetricHistory::System(history, "Llama Memory"),
+            }) {
                 self.items.push(item);
             }
         }
     }
     
-    fn create_metric(
-        &self,
-        name: &str,
-        primary_data: &VecDeque<TimestampedValue>,
-        secondary_data: Option<&VecDeque<TimestampedValue>>,
-        chart_type: charts::MetricType,
-        format_fn: fn(f64) -> String,
-        display_type: MetricDisplayType,
-        history: MetricHistory,
-    ) -> Option<MenuItem> {
-        if primary_data.is_empty() {
+    fn create_metric(&self, config: MetricConfig) -> Option<MenuItem> {
+        if config.primary_data.is_empty() {
             return None;
         }
         
-        let insights = history.get_stats(primary_data);
-        let label = build_label(name, &insights, secondary_data, format_fn, &display_type);
+        let insights = config.history.get_stats(config.primary_data);
+        let label = build_label(config.name, &insights, config.secondary_data, config.format_fn, &config.display_type);
         let mut item = ContentItem::new(label);
         
-        add_chart(&mut item, primary_data, chart_type);
-        let submenu = history.build_submenu(&insights, primary_data, secondary_data, format_fn, &display_type);
+        add_chart(&mut item, config.primary_data, config.chart_type);
+        let submenu = config.history.build_submenu(&insights, config.primary_data, config.secondary_data, config.format_fn, &config.display_type);
         item = item.sub(submenu);
         
         Some(MenuItem::Content(item))
@@ -234,9 +283,9 @@ impl MenuBuilder {
             "#666666"
         };
         
-        let queue_item = create_colored_item(&format!("Queue: {}", queue_status), color)
+        let queue_item = create_colored_item(&format!("Queue: {queue_status}"), color)
             .sub(vec![
-                MenuItem::Content(ContentItem::new(format!("Status: {}", queue_status))),
+                MenuItem::Content(ContentItem::new(format!("Status: {queue_status}"))),
                 MenuItem::Content(ContentItem::new(format!("Processing: {} requests", current_metrics.requests_processing))),
                 MenuItem::Content(ContentItem::new(format!("Deferred: {} requests", current_metrics.requests_deferred))),
                 MenuItem::Content(ContentItem::new(format!("Decode Calls: {}", current_metrics.n_decode_total))),
@@ -313,7 +362,7 @@ fn build_label(
         MetricDisplayType::LlamaMemory => {
             let mb_current = insights.current;
             if mb_current < 1024.0 {
-                format!("{}: {:.1} MB", name, mb_current)
+                format!("{name}: {mb_current:.1} MB")
             } else {
                 format!("{}: {:.2} GB", name, mb_current / 1024.0)
             }
@@ -377,9 +426,9 @@ fn build_submenu(
             };
             
             if mb_current < 1024.0 {
-                format!("Current: {:.1} MB ({:.1}% of system)", mb_current, memory_percent)
+                format!("Current: {mb_current:.1} MB ({memory_percent:.1}% of system)")
             } else {
-                format!("Current: {:.2} GB ({:.1}% of system)", gb_current, memory_percent)
+                format!("Current: {gb_current:.2} GB ({memory_percent:.1}% of system)")
             }
         },
         _ => format!("Current: {}", format_fn(insights.current)),
@@ -406,7 +455,7 @@ fn build_submenu(
                         let gb_min = gb_values.iter().fold(f64::INFINITY, |a, &b| a.min(b));
                         let gb_max = gb_values.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
                         submenu.push(MenuItem::Content(
-                            ContentItem::new(format!("GB Range: {:.1} - {:.1}", gb_min, gb_max))
+                            ContentItem::new(format!("GB Range: {gb_min:.1} - {gb_max:.1}"))
                         ));
                     }
                 }
@@ -419,7 +468,7 @@ fn build_submenu(
                 
                 let total_system_memory_gb = calculate_total_system_memory(system_history.unwrap());
                 submenu.push(MenuItem::Content(
-                    ContentItem::new(format!("System Total: {:.1} GB", total_system_memory_gb))
+                    ContentItem::new(format!("System Total: {total_system_memory_gb:.1} GB"))
                 ));
             },
             _ => {
@@ -444,7 +493,7 @@ fn build_submenu(
     
     if !time_text.is_empty() {
         submenu.push(MenuItem::Content(
-            ContentItem::new(format!("Dataset: {}", time_text))
+            ContentItem::new(format!("Dataset: {time_text}"))
         ));
     }
     
@@ -470,25 +519,25 @@ fn calculate_total_system_memory(history: &AllMetricsHistory) -> f64 {
 
 fn format_memory(mb: f64) -> String {
     if mb < 1024.0 {
-        format!("{:.1} MB", mb)
+        format!("{mb:.1} MB")
     } else {
         format!("{:.2} GB", mb / 1024.0)
     }
 }
 
 fn format_tps(v: f64) -> String {
-    format!("{:.1} tok/s", v)
+    format!("{v:.1} tok/s")
 }
 
 fn format_percent(v: f64) -> String {
-    format!("{:.1}%", v)
+    format!("{v:.1}%")
 }
 
 
 pub fn build_menu(state: &PluginState) -> crate::Result<String> {
     let mut menu = MenuBuilder::new();
     
-    let current_program_state = state.program_state_machine.state().clone();
+    let current_program_state = *state.program_state_machine.state();
     
     menu.add_title(current_program_state);
     menu.add_separator();
@@ -603,7 +652,7 @@ mod tests {
         let _ = state.agent_state_machine.process_event(AgentEvents::StartupComplete(crate::state_machines::agent::StartupTimeout));
         
         // Step 2: Drive program state machine by feeding it the running agent state
-        let agent_state = state.agent_state_machine.state().clone();
+        let agent_state = *state.agent_state_machine.state();
         let _ = state.program_state_machine.process_event(ProgramEvents::AgentStateChanged(AgentUpdate(agent_state)));
         
         // Step 3: Simulate having models loaded and ready (ModelReady state)
@@ -655,7 +704,7 @@ mod tests {
         let _ = state.agent_state_machine.process_event(AgentEvents::ServiceDetected(ServiceRunning(false)));
         
         // Step 2: Drive program state machine with the stopped agent state
-        let agent_state = state.agent_state_machine.state().clone();
+        let agent_state = *state.agent_state_machine.state();
         let _ = state.program_state_machine.process_event(ProgramEvents::AgentStateChanged(AgentUpdate(agent_state)));
         
         // Step 3: No models since service is not running

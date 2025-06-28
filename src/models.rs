@@ -126,7 +126,7 @@ impl Metrics {
             (0, _) => "idle".to_string(),
             (_, 0) if self.requests_processing == 1 => "busy".to_string(),
             (_, 0) => format!("busy ({})", self.requests_processing),
-            _ => format!("queued ({})", total_requests),
+            _ => format!("queued ({total_requests})"),
         }
     }
 }
@@ -172,11 +172,11 @@ impl MetricStats {
             _ => {
                 let duration_secs = newest_timestamp.saturating_sub(oldest_timestamp);
                 let time_text = match duration_secs {
-                    s if s < 60 => format!("{}s", s),
+                    s if s < 60 => format!("{s}s"),
                     s if s < 3600 => format!("{}m", s / 60),
                     s => format!("{}h", s / 3600),
                 };
-                format!("({})", time_text)
+                format!("({time_text})")
             }
         }
     }
@@ -224,7 +224,7 @@ impl DataAnalyzer {
     }
     
     pub fn trim_deque(deque: &mut VecDeque<TimestampedValue>, cutoff: u64) {
-        while deque.front().map_or(false, |v| v.timestamp < cutoff) {
+        while deque.front().is_some_and(|v| v.timestamp < cutoff) {
             deque.pop_front();
         }
     }
