@@ -13,6 +13,7 @@ pub fn handle_command(command: &str) -> crate::Result<()> {
         "do_unload" => unload_models(),
         "do_install" => install_service(),
         "do_uninstall" => uninstall_service(),
+        "open_ui" => open_ui(),
         "view_logs" => view_file(crate::constants::LOG_FILE_PATH, create_default_log),
         "view_config" => view_file(crate::constants::CONFIG_FILE_PATH, create_default_config),
         _ => Err(format!("Unknown command: {command}").into()),
@@ -140,6 +141,19 @@ fn view_file(file_path: &str, default_content_fn: fn() -> &'static str) -> crate
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!("Failed to open file: {stderr}").into());
+    }
+
+    Ok(())
+}
+
+fn open_ui() -> crate::Result<()> {
+    let ui_url = format!("{}:{}/ui/models", crate::constants::API_BASE_URL, crate::constants::API_PORT);
+
+    let output = with_context(Command::new("open").arg(ui_url).output(), EXEC_COMMAND)?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("Failed to open UI: {stderr}").into());
     }
 
     Ok(())

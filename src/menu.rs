@@ -71,18 +71,22 @@ static CONTROL_COMMANDS: &[MenuCommand] = &[
 
 static FILE_COMMANDS: &[MenuCommand] = &[
     MenuCommand {
-        icon: ":doc.text.magnifyingglass:",
-        label: "View Llama-Swap Logs",
-        action: "view_logs",
-        states: &[], // Available in all states
-    },
-    MenuCommand {
         icon: ":gearshape:",
         label: "Edit Llama-Swap Configuration",
         action: "view_config",
         states: &[], // Available in all states
     },
 ];
+static UI_COMMAND: MenuCommand = MenuCommand {
+    icon: ":globe:",
+    label: "Open Llama-Swap UI",
+    action: "open_ui",
+    states: &[
+        DisplayState::ModelProcessingQueue,
+        DisplayState::ModelReady,
+        DisplayState::ServiceLoadedNoModel,
+    ], // Only when API is responsive
+};
 
 static RESTART_COMMAND: MenuCommand = MenuCommand {
     icon: ":arrow.2.circlepath:",
@@ -425,15 +429,101 @@ impl MenuBuilder {
         self.items.push(MenuItem::Content(queue_item));
     }
 
+    fn add_quick_actions_section(
+        &mut self,
+        display_state: DisplayState,
+        has_models: bool,
+        service_status: &crate::types::ServiceStatus,
+        exe_str: &str,
+    ) {
+        let mut actions = Vec::new();
+
+        match display_state {
+            DisplayState::ModelReady | DisplayState::ModelProcessingQueue => {
+                // When models are running, prioritize Open UI for quick access
+                if UI_COMMAND.is_available_for_state(display_state) {
+                    if let Ok(item) = UI_COMMAND.create_item(exe_str) {
+                        actions.push(item);
+                    }
+                }
+                // Secondary action: unload models if present
+                else if has_models {
+                    if let Some(unload_cmd) =
+                        CONTROL_COMMANDS.iter().find(|c| c.action == "do_unload")
+                    {
+                        if let Ok(item) = unload_cmd.create_item(exe_str) {
+                            actions.push(item);
+                        }
+                    }
+                }
+            }
+            DisplayState::ServiceLoadedNoModel => {
+                // When service is loaded but no models, prioritize Open UI for quick access
+                if UI_COMMAND.is_available_for_state(display_state) {
+                    if let Ok(item) = UI_COMMAND.create_item(exe_str) {
+                        actions.push(item);
+                    }
+                }
+                // Secondary action: stop service if UI not available
+                else if let Some(stop_cmd) = CONTROL_COMMANDS.iter().find(|c| c.action == "do_stop") {
+                    if let Ok(item) = stop_cmd.create_item(exe_str) {
+                        actions.push(item);
+                    }
+                }
+            }
+            DisplayState::ServiceStopped => {
+                // When service is stopped, offer to start it
+                if let Some(start_cmd) = CONTROL_COMMANDS.iter().find(|c| c.action == "do_start") {
+                    if let Ok(item) = start_cmd.create_item(exe_str) {
+                        actions.push(item);
+                    }
+                }
+            }
+            DisplayState::AgentNotLoaded => {
+                // When agent not loaded, prioritize installation or starting
+                if !service_status.plist_installed {
+                    if let Ok(item) = INSTALL_COMMAND.create_item(exe_str) {
+                        actions.push(item);
+                    }
+                } else if service_status.plist_installed && !service_status.is_fully_running() {
+                    if let Some(start_cmd) =
+                        CONTROL_COMMANDS.iter().find(|c| c.action == "do_start")
+                    {
+                        if let Ok(item) = start_cmd.create_item(exe_str) {
+                            actions.push(item);
+                        }
+                    }
+                }
+            }
+            DisplayState::AgentStarting => {
+                // When starting, allow stopping to cancel
+                if let Some(stop_cmd) = CONTROL_COMMANDS.iter().find(|c| c.action == "do_stop") {
+                    if let Ok(item) = stop_cmd.create_item(exe_str) {
+                        actions.push(item);
+                    }
+                }
+            }
+            DisplayState::ModelLoading => {
+                // During model loading, no immediate action needed
+                // Could add stop service if needed, but loading is usually quick
+            }
+        }
+
+        // Only add the section if we have actions to show
+        if !actions.is_empty() {
+            for action in actions {
+                self.items.push(MenuItem::Content(action));
+            }
+        }
+    }
+
     fn add_settings_section(
         &mut self,
         display_state: DisplayState,
         has_models: bool,
         state: &PluginState,
+        exe_str: &str,
     ) {
-        let exe = std::env::current_exe().unwrap();
-        let exe_str = exe.to_str().unwrap();
-
         let mut submenu = Vec::new();
 
         // Use the comprehensive service status from state
@@ -544,6 +634,13 @@ impl MenuBuilder {
         }
 
         submenu.push(MenuItem::Sep);
+
+        // Add UI command when API is available
+        if UI_COMMAND.is_available_for_state(display_state) {
+            if let Ok(item) = UI_COMMAND.create_item(exe_str) {
+                submenu.push(MenuItem::Content(item));
+            }
+        }
 
         // Add file action commands
         for command in FILE_COMMANDS {
@@ -846,8 +943,12 @@ pub fn build_menu(state: &PluginState) -> crate::Result<String> {
         }
     }
 
+    let exe = std::env::current_exe().unwrap();
+    let exe_str = exe.to_str().unwrap();
+
     menu.add_separator();
-    menu.add_settings_section(display_state, has_models, state);
+    menu.add_quick_actions_section(display_state, has_models, &state.service_status, exe_str);
+    menu.add_settings_section(display_state, has_models, state, exe_str);
 
     let built_menu = menu.build();
     Ok(built_menu.to_string())
@@ -960,7 +1061,6 @@ mod tests {
                     memory_mb: 1000.0,
                 },
             }],
-
         };
         state.current_all_metrics = Some(dummy_metrics);
 

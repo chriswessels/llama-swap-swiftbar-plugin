@@ -1,6 +1,5 @@
 use crate::constants::{
-    CHART_HEIGHT, CHART_WIDTH, COLOR_MEM_LINE, COLOR_PROMPT_LINE,
-    COLOR_QUEUE_LINE, COLOR_TPS_LINE,
+    CHART_HEIGHT, CHART_WIDTH, COLOR_MEM_LINE, COLOR_PROMPT_LINE, COLOR_QUEUE_LINE, COLOR_TPS_LINE,
 };
 use image::{DynamicImage, Rgba, RgbaImage};
 // Charts operate on Vec<f64> data for visualization

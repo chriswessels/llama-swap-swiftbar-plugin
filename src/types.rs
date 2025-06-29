@@ -98,7 +98,6 @@ pub struct PluginState {
 
     // Timing for state transitions
     last_state_change: Instant,
-
 }
 
 impl PluginState {
@@ -129,7 +128,6 @@ impl PluginState {
             model_states: HashMap::new(),
             service_status,
             last_state_change: Instant::now(),
-
         })
     }
 
@@ -285,9 +283,7 @@ impl PluginState {
                 .metrics_history
                 .models
                 .entry(model_metrics.model_name.clone())
-                .or_insert_with(|| {
-                    crate::models::MetricsHistory::new()
-                });
+                .or_default();
             history.push(&model_metrics.metrics);
         }
 

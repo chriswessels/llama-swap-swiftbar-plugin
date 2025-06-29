@@ -20,7 +20,6 @@ pub struct ProcessInfo {
 struct PrometheusMetric {
     name: String,
     value: f64,
-
 }
 
 fn parse_prometheus_line(line: &str) -> Option<PrometheusMetric> {
@@ -39,16 +38,11 @@ fn parse_prometheus_line(line: &str) -> Option<PrometheusMetric> {
     if let Some(label_start) = metric_part.find('{') {
         let name = metric_part[..label_start].to_string();
 
-
-        Some(PrometheusMetric {
-            name,
-            value,
-        })
+        Some(PrometheusMetric { name, value })
     } else {
         Some(PrometheusMetric {
             name: metric_part.to_string(),
             value,
-
         })
     }
 }
@@ -233,8 +227,6 @@ pub fn fetch_all_metrics(client: &Client) -> crate::Result<AllMetrics> {
 
     let running_response: RunningResponse = with_context(response.json(), PARSE_JSON)?;
 
-
-
     let models = running_response
         .running
         .iter()
@@ -256,9 +248,7 @@ pub fn fetch_all_metrics(client: &Client) -> crate::Result<AllMetrics> {
         })
         .collect();
 
-    Ok(AllMetrics {
-        models,
-    })
+    Ok(AllMetrics { models })
 }
 
 // Helper functions

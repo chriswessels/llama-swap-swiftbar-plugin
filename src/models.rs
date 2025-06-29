@@ -127,8 +127,6 @@ impl MetricStats {
 pub struct DataAnalyzer;
 
 impl DataAnalyzer {
-
-
     pub fn get_stats_from_circular_queue(cq: &CircularQueue<TimestampedValue>) -> MetricStats {
         if cq.is_empty() {
             return MetricStats::default();
@@ -179,8 +177,6 @@ pub struct MetricsHistory {
     pub prompt_tps: CircularQueue<TimestampedValue>,
     pub memory_mb: CircularQueue<TimestampedValue>,
     pub queue_size: CircularQueue<TimestampedValue>,
-
-
 }
 
 impl Default for MetricsHistory {
@@ -200,7 +196,6 @@ impl MetricsHistory {
             prompt_tps: CircularQueue::with_capacity(capacity),
             memory_mb: CircularQueue::with_capacity(capacity),
             queue_size: CircularQueue::with_capacity(capacity),
-
         }
     }
 
@@ -255,8 +250,6 @@ pub struct AllMetricsHistory {
     pub cpu_usage_percent: CircularQueue<TimestampedValue>,
     pub memory_usage_percent: CircularQueue<TimestampedValue>,
     pub used_memory_gb: CircularQueue<TimestampedValue>,
-
-
 }
 
 impl Default for AllMetricsHistory {
@@ -277,11 +270,8 @@ impl AllMetricsHistory {
             cpu_usage_percent: CircularQueue::with_capacity(capacity),
             memory_usage_percent: CircularQueue::with_capacity(capacity),
             used_memory_gb: CircularQueue::with_capacity(capacity),
-
         }
     }
-
-
 
     pub fn trim_old_data(&mut self) {
         let cutoff = current_timestamp().saturating_sub(300); // 5 minutes
