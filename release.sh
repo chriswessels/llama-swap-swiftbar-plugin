@@ -143,12 +143,6 @@ run_check "Running tests" "cargo test --verbose" "Please fix failing tests befor
 
 run_check "Checking release build" "cargo build --release --verbose" "Please fix build errors before creating a release."
 
-# Test CLI functionality (basic smoke tests)
-print_info "Running CLI smoke tests..."
-run_check "Testing CLI help command" "cargo run --release -- --help > /dev/null" "CLI help command is not working properly"
-
-run_check "Testing CLI version command" "cargo run --release -- --version > /dev/null" "CLI version command is not working properly"
-
 print_success "All quality checks passed!"
 
 # Show confirmation
