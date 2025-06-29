@@ -1,7 +1,7 @@
 # Llama-Swap SwiftBar Plugin
 
-[![CI](https://github.com/your-org/llama-swap-swiftbar-plugin/actions/workflows/ci.yml/badge.svg)](https://github.com/your-org/llama-swap-swiftbar-plugin/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/your-org/llama-swap-swiftbar-plugin)](https://github.com/your-org/llama-swap-swiftbar-plugin/releases)
+[![CI](https://github.com/chriswessels/llama-swap-swiftbar-plugin/actions/workflows/ci.yml/badge.svg)](https://github.com/chriswessels/llama-swap-swiftbar-plugin/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/chriswessels/llama-swap-swiftbar-plugin)](https://github.com/chriswessels/llama-swap-swiftbar-plugin/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A macOS menu bar plugin for SwiftBar that provides real-time monitoring and control of the Llama-Swap multi-model AI inference service. Monitor AI model performance, manage service lifecycle, and visualize metrics directly from your menu bar.
@@ -67,18 +67,18 @@ This approach uses a shell script wrapper that provides better integration with 
    # Download binary for your architecture
    # For Apple Silicon (M1/M2/M3/M4)
    curl -L -o ~/.local/bin/llama-swap-swiftbar \
-     https://github.com/your-org/llama-swap-swiftbar-plugin/releases/latest/download/llama-swap-swiftbar-arm64
+     https://github.com/chriswessels/llama-swap-swiftbar-plugin/releases/latest/download/llama-swap-swiftbar-arm64
    
    # For Intel Macs
    curl -L -o ~/.local/bin/llama-swap-swiftbar \
-     https://github.com/your-org/llama-swap-swiftbar-plugin/releases/latest/download/llama-swap-swiftbar-x64
+     https://github.com/chriswessels/llama-swap-swiftbar-plugin/releases/latest/download/llama-swap-swiftbar-x64
    
    # Make binary executable
    chmod +x ~/.local/bin/llama-swap-swiftbar
    
    # Download shell script wrapper
    curl -L -o ~/Library/Application\ Support/SwiftBar/llama-swap-swiftbar.sh \
-     https://github.com/your-org/llama-swap-swiftbar-plugin/releases/latest/download/llama-swap-swiftbar.sh
+     https://github.com/chriswessels/llama-swap-swiftbar-plugin/releases/latest/download/llama-swap-swiftbar.sh
    
    # Make script executable
    chmod +x ~/Library/Application\ Support/SwiftBar/llama-swap-swiftbar.sh
@@ -101,11 +101,11 @@ brew install --cask swiftbar
 # Download and install binary directly
 # For Apple Silicon
 curl -L -o ~/Library/Application\ Support/SwiftBar/llama-swap-swiftbar \
-  https://github.com/your-org/llama-swap-swiftbar-plugin/releases/latest/download/llama-swap-swiftbar-arm64
+  https://github.com/chriswessels/llama-swap-swiftbar-plugin/releases/latest/download/llama-swap-swiftbar-arm64
 
 # For Intel
 curl -L -o ~/Library/Application\ Support/SwiftBar/llama-swap-swiftbar \
-  https://github.com/your-org/llama-swap-swiftbar-plugin/releases/latest/download/llama-swap-swiftbar-x64
+  https://github.com/chriswessels/llama-swap-swiftbar-plugin/releases/latest/download/llama-swap-swiftbar-x64
 
 # Make executable and refresh SwiftBar
 chmod +x ~/Library/Application\ Support/SwiftBar/llama-swap-swiftbar
@@ -128,7 +128,7 @@ chmod +x ~/Library/Application\ Support/SwiftBar/llama-swap-swiftbar
 
 2. **Clone and Build**
    ```bash
-   git clone https://github.com/your-org/llama-swap-swiftbar-plugin.git
+   git clone https://github.com/chriswessels/llama-swap-swiftbar-plugin.git
    cd llama-swap-swiftbar-plugin
    cargo build --release
    ```
@@ -220,7 +220,7 @@ The project includes GitHub Actions CI that:
 - ✅ Creates universal binaries for releases
 - ✅ Automatically uploads release artifacts
 
-CI Status: ![CI](https://github.com/your-org/llama-swap-swiftbar-plugin/actions/workflows/ci.yml/badge.svg)
+CI Status: ![CI](https://github.com/chriswessels/llama-swap-swiftbar-plugin/actions/workflows/ci.yml/badge.svg)
 
 ### Building
 ```bash
