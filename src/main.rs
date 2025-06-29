@@ -13,9 +13,9 @@ mod types;
 use crate::types::{PluginState, Result};
 use std::error::Error;
 use std::io::{self, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::thread;
+// Removed AtomicBool import as we now use channels for shutdown signaling
+use std::sync::mpsc;
+// Removed thread import as adaptive_sleep no longer uses thread::sleep
 use std::time::{Duration, Instant};
 
 // PluginState is now in types.rs to avoid duplication
@@ -62,12 +62,12 @@ fn run() -> Result<()> {
 }
 
 fn run_streaming_mode() -> Result<()> {
-    let running = setup_shutdown_handler()?;
+    let shutdown_rx = setup_shutdown_handler()?;
     let mut state = PluginState::new()?;
 
     eprintln!("Starting adaptive polling mode");
 
-    while running.load(Ordering::SeqCst) {
+    loop {
         let loop_start = Instant::now();
 
         let frame = render_frame(&mut state)?;
@@ -75,7 +75,12 @@ fn run_streaming_mode() -> Result<()> {
         io::stdout().flush()?;
 
         let sleep_duration = state.polling_mode.interval();
-        adaptive_sleep(sleep_duration, &running);
+        adaptive_sleep(sleep_duration, &shutdown_rx);
+
+        // Check if we received a shutdown signal during sleep
+        if shutdown_rx.try_recv().is_ok() {
+            break;
+        }
 
         log_slow_iteration(loop_start, &state);
     }
@@ -96,32 +101,22 @@ fn render_frame(state: &mut PluginState) -> Result<String> {
     menu::build_menu(state)
 }
 
-fn setup_shutdown_handler() -> Result<Arc<AtomicBool>> {
-    let running = Arc::new(AtomicBool::new(true));
-    let r = running.clone();
+fn setup_shutdown_handler() -> Result<mpsc::Receiver<()>> {
+    let (tx, rx) = mpsc::channel();
 
     ctrlc::set_handler(move || {
-        r.store(false, Ordering::SeqCst);
+        let _ = tx.send(()); // Ignore send errors if receiver is dropped
     })?;
 
-    Ok(running)
+    Ok(rx)
 }
 
-fn adaptive_sleep(duration: Duration, running: &Arc<AtomicBool>) {
-    let sleep_chunks = duration.as_secs().max(1);
-    let chunk_duration = Duration::from_secs(1);
-
-    for _ in 0..sleep_chunks {
-        if !running.load(Ordering::SeqCst) {
-            break;
-        }
-        thread::sleep(chunk_duration);
-    }
-
-    let remainder = duration - Duration::from_secs(sleep_chunks);
-    if remainder > Duration::ZERO && running.load(Ordering::SeqCst) {
-        thread::sleep(remainder);
-    }
+fn adaptive_sleep(duration: Duration, shutdown_rx: &mpsc::Receiver<()>) {
+    let _ = shutdown_rx.recv_timeout(duration);
+    // If recv_timeout returns Ok(()), we got a shutdown signal
+    // If it returns Err(RecvTimeoutError::Timeout), the duration elapsed
+    // If it returns Err(RecvTimeoutError::Disconnected), the sender was dropped (also treat as shutdown)
+    // In all cases, we just return - the caller will check if shutdown was requested
 }
 
 fn log_slow_iteration(loop_start: Instant, state: &PluginState) {
