@@ -9,21 +9,18 @@ fn test_install_ux_message_contains_helpful_guidance() {
 
     let menu_str = build_menu(&state).unwrap();
 
-    // The fix should ensure that when install is not available,
-    // helpful guidance is provided
-    if menu_str.contains("Cannot find llama-swap in $PATH") {
-        // If binary is indeed missing (as detected by system check),
-        // then install guidance should be shown
-        assert!(
-            menu_str.contains("Install llama-swap binary first")
-                || menu_str.contains("brew install llama-swap")
-        );
-        println!("✓ Test passed: Binary missing case shows helpful guidance");
-    } else {
-        // If binary is available (as on this system), install button should be shown
-        assert!(menu_str.contains("Install Llama-Swap Service"));
-        println!("✓ Test passed: Binary available case shows install button");
-    }
+    // The test should verify that when the agent is not loaded,
+    // the menu shows install options
+    assert!(menu_str.contains("Install Llama-Swap Service"));
+
+    // The menu should also show the missing requirements status
+    assert!(menu_str.contains("Missing requirements"));
+
+    // The advanced submenu should show binary detection status
+    // (this shows regardless of whether binary is actually available)
+    assert!(menu_str.contains("Binary:"));
+
+    println!("✓ Test passed: AgentNotLoaded state shows install options");
 }
 
 #[test]
