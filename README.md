@@ -65,7 +65,7 @@ This approach uses a shell script wrapper that provides better integration with 
    mkdir -p ~/.local/bin
    
    # Download binary for your architecture
-   # For Apple Silicon (M1/M2/M3)
+   # For Apple Silicon (M1/M2/M3/M4)
    curl -L -o ~/.local/bin/llama-swap-swiftbar \
      https://github.com/your-org/llama-swap-swiftbar-plugin/releases/latest/download/llama-swap-swiftbar-arm64
    
