@@ -37,8 +37,11 @@ ctrlc = "3.4"
 sysinfo = "0.31"
 base64 = "0.22.1"
 
-# State machine DSL
-smlang = "0.8.0"
+# High-performance circular queue with serde support
+circular-queue = { version = "0.2", features = ["serde_support"] }
+
+
+# State machine DSL dependency removed - was unused
 
 [profile.release]
 opt-level = "z"     # Optimize for size

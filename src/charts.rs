@@ -6,6 +6,7 @@ use image::{DynamicImage, Rgba, RgbaImage};
 use std::collections::VecDeque;
 
 #[derive(Clone, Copy)]
+#[allow(dead_code)]
 pub enum MetricType {
     Tps,
     Memory,

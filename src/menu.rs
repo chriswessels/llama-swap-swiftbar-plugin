@@ -2,7 +2,7 @@ use crate::models::{AllMetricsHistory, MetricsHistory, TimestampedValue};
 use crate::state_model::DisplayState;
 use crate::{charts, icons};
 use bitbar::{ContentItem, Menu, MenuItem};
-use std::collections::VecDeque;
+use circular_queue::CircularQueue;
 
 // Use the shared PluginState
 use crate::types::PluginState;
@@ -129,8 +129,8 @@ enum MetricHistory<'a> {
 
 struct MetricConfig<'a> {
     name: &'a str,
-    primary_data: &'a VecDeque<TimestampedValue>,
-    secondary_data: Option<&'a VecDeque<TimestampedValue>>,
+    primary_data: &'a CircularQueue<TimestampedValue>,
+    secondary_data: Option<&'a CircularQueue<TimestampedValue>>,
     chart_type: charts::MetricType,
     format_fn: fn(f64) -> String,
     display_type: MetricDisplayType,
@@ -138,7 +138,10 @@ struct MetricConfig<'a> {
 }
 
 impl MetricHistory<'_> {
-    fn get_stats(&self, primary_data: &VecDeque<TimestampedValue>) -> crate::models::MetricStats {
+    fn get_stats(
+        &self,
+        primary_data: &CircularQueue<TimestampedValue>,
+    ) -> crate::models::MetricStats {
         match self {
             MetricHistory::Model(history) => history.get_stats(primary_data),
             MetricHistory::System(history, metric_name) => get_system_stats(metric_name, history),
@@ -148,8 +151,8 @@ impl MetricHistory<'_> {
     fn build_submenu(
         &self,
         insights: &crate::models::MetricStats,
-        primary_data: &VecDeque<TimestampedValue>,
-        secondary_data: Option<&VecDeque<TimestampedValue>>,
+        primary_data: &CircularQueue<TimestampedValue>,
+        secondary_data: Option<&CircularQueue<TimestampedValue>>,
         format_fn: fn(f64) -> String,
         display_type: &MetricDisplayType,
     ) -> Vec<MenuItem> {
@@ -239,8 +242,6 @@ impl MenuBuilder {
             self.items.push(item);
         }
 
-
-
         self.add_queue_status(current_metrics, history);
     }
 
@@ -292,7 +293,8 @@ impl MenuBuilder {
     }
 
     fn add_llama_process_breakdown(&mut self, history: &AllMetricsHistory) {
-        let processes = crate::metrics::get_detailed_llama_processes();
+        let system = sysinfo::System::new_all();
+        let processes = crate::metrics::get_detailed_llama_processes(&system);
 
         if processes.is_empty() {
             return;
@@ -320,12 +322,17 @@ impl MenuBuilder {
             let process_text = if let Some(ref model) = process.inferred_model {
                 format!(
                     "├─ {} ({}): {} - {}",
-                    process.name, process.pid, format_memory_mb(process.memory_mb), model
+                    process.name,
+                    process.pid,
+                    format_memory_mb(process.memory_mb),
+                    model
                 )
             } else {
                 format!(
                     "├─ {} ({}): {}",
-                    process.name, process.pid, format_memory_mb(process.memory_mb)
+                    process.name,
+                    process.pid,
+                    format_memory_mb(process.memory_mb)
                 )
             };
 
@@ -373,7 +380,11 @@ impl MenuBuilder {
         Some(MenuItem::Content(item))
     }
 
-    fn add_queue_status(&mut self, current_metrics: &crate::models::Metrics, history: &MetricsHistory) {
+    fn add_queue_status(
+        &mut self,
+        current_metrics: &crate::models::Metrics,
+        history: &MetricsHistory,
+    ) {
         let queue_status = current_metrics.queue_status();
         let total_queue = current_metrics.requests_processing + current_metrics.requests_deferred;
         let color =
@@ -383,13 +394,17 @@ impl MenuBuilder {
                 "#666666"
             };
 
-        let mut queue_item = create_colored_item(&format!("Queue: {}", queue_status), color);
-        
+        let mut queue_item = create_colored_item(&format!("Queue: {queue_status}"), color);
+
         // Add the queue size chart if we have history data
         if !history.queue_size.is_empty() {
-            add_chart(&mut queue_item, &history.queue_size, charts::MetricType::Queue);
+            add_chart(
+                &mut queue_item,
+                &history.queue_size,
+                charts::MetricType::Queue,
+            );
         }
-        
+
         queue_item = queue_item.sub(vec![
             MenuItem::Content(ContentItem::new(format!("Status: {queue_status}"))),
             MenuItem::Content(ContentItem::new(format!(
@@ -400,10 +415,7 @@ impl MenuBuilder {
                 "Deferred: {} requests",
                 current_metrics.requests_deferred
             ))),
-            MenuItem::Content(ContentItem::new(format!(
-                "Total Queue Size: {}",
-                total_queue
-            ))),
+            MenuItem::Content(ContentItem::new(format!("Total Queue Size: {total_queue}"))),
             MenuItem::Content(ContentItem::new(format!(
                 "Decode Calls: {}",
                 current_metrics.n_decode_total
@@ -499,10 +511,8 @@ impl MenuBuilder {
                 if let Ok(item) = INSTALL_COMMAND.create_item(exe_str) {
                     submenu.push(MenuItem::Content(item));
                 }
-            } else {
-                if let Ok(item) = UNINSTALL_COMMAND.create_item(exe_str) {
-                    submenu.push(MenuItem::Content(item));
-                }
+            } else if let Ok(item) = UNINSTALL_COMMAND.create_item(exe_str) {
+                submenu.push(MenuItem::Content(item));
             }
             submenu.push(MenuItem::Sep);
         } else {
@@ -626,14 +636,14 @@ impl MenuBuilder {
 fn build_label(
     name: &str,
     insights: &crate::models::MetricStats,
-    secondary_data: Option<&VecDeque<TimestampedValue>>,
+    secondary_data: Option<&CircularQueue<TimestampedValue>>,
     format_fn: fn(f64) -> String,
     display_type: &MetricDisplayType,
 ) -> String {
     match display_type {
         MetricDisplayType::Simple => format!("{}: {}", name, format_fn(insights.current)),
         MetricDisplayType::SystemMemory => {
-            let gb_current = secondary_data.unwrap().back().unwrap().value;
+            let gb_current = secondary_data.unwrap().iter().next().unwrap().value; // First item is newest in CircularQueue
             format!("{}: {:.1} GB ({:.1}%)", name, gb_current, insights.current)
         }
     }
@@ -641,10 +651,11 @@ fn build_label(
 
 fn add_chart(
     item: &mut ContentItem,
-    data: &VecDeque<TimestampedValue>,
+    data: &CircularQueue<TimestampedValue>,
     chart_type: charts::MetricType,
 ) {
-    let values = data.iter().map(|tv| tv.value).collect();
+    // Convert CircularQueue to Vec<f64> in oldest-to-newest order for charts
+    let values = data.iter().rev().map(|tv| tv.value).collect();
     if let Ok(chart) = charts::generate_sparkline(&values, chart_type) {
         if let Ok(chart_image) = icons::chart_to_menu_image(&chart) {
             // We need to replace the item content, not clone it
@@ -665,8 +676,8 @@ fn get_system_stats(metric_name: &str, history: &AllMetricsHistory) -> crate::mo
 
 fn build_submenu(
     insights: &crate::models::MetricStats,
-    primary_data: &VecDeque<TimestampedValue>,
-    secondary_data: Option<&VecDeque<TimestampedValue>>,
+    primary_data: &CircularQueue<TimestampedValue>,
+    secondary_data: Option<&CircularQueue<TimestampedValue>>,
     format_fn: fn(f64) -> String,
     display_type: &MetricDisplayType,
     _model_history: Option<&MetricsHistory>,
@@ -677,7 +688,7 @@ fn build_submenu(
     // Current value
     let current_text = match display_type {
         MetricDisplayType::SystemMemory => {
-            let gb_current = secondary_data.unwrap().back().unwrap().value;
+            let gb_current = secondary_data.unwrap().iter().next().unwrap().value; // First item is newest
             format!("Current: {:.1} GB ({:.1}%)", gb_current, insights.current)
         }
         MetricDisplayType::Simple => format!("Current: {}", format_fn(insights.current)),
@@ -700,43 +711,41 @@ fn build_submenu(
             MetricDisplayType::SystemMemory => {
                 // Add total system memory and available memory context
                 let total_system_memory_gb = calculate_total_system_memory(system_history.unwrap());
-                let current_used_gb = secondary_data.unwrap().back().unwrap().value;
+                let current_used_gb = secondary_data.unwrap().iter().next().unwrap().value; // First item is newest
                 let available_gb = total_system_memory_gb - current_used_gb;
 
                 submenu.push(MenuItem::Content(ContentItem::new(format!(
-                    "Total System: {:.1} GB",
-                    total_system_memory_gb
+                    "Total System: {total_system_memory_gb:.1} GB"
                 ))));
                 submenu.push(MenuItem::Content(ContentItem::new(format!(
-                    "Available: {:.1} GB",
-                    available_gb
+                    "Available: {available_gb:.1} GB"
                 ))));
 
                 // Add average with GB values
                 if let Some(secondary) = secondary_data {
                     if secondary.len() > 1 {
-                        let gb_values: Vec<f64> = secondary.iter().map(|tv| tv.value).collect();
+                        let gb_values: Vec<f64> =
+                            secondary.iter().rev().map(|tv| tv.value).collect(); // Use oldest-to-newest for stats
                         let gb_sum: f64 = gb_values.iter().sum();
                         let gb_avg = gb_sum / gb_values.len() as f64;
                         let avg_percent = (gb_avg / total_system_memory_gb) * 100.0;
 
                         submenu.push(MenuItem::Content(ContentItem::new(format!(
-                            "Average: {:.1}% ({:.1} GB)",
-                            avg_percent, gb_avg
+                            "Average: {avg_percent:.1}% ({gb_avg:.1} GB)"
                         ))));
 
                         let gb_max = gb_values.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
                         let max_percent = (gb_max / total_system_memory_gb) * 100.0;
 
                         submenu.push(MenuItem::Content(ContentItem::new(format!(
-                            "Peak: {:.1}% ({:.1} GB)",
-                            max_percent, gb_max
+                            "Peak: {max_percent:.1}% ({gb_max:.1} GB)"
                         ))));
                     }
                 }
             }
             MetricDisplayType::Simple => {
-                let stats = crate::models::DataAnalyzer::get_stats(primary_data);
+                let stats =
+                    crate::models::DataAnalyzer::get_stats_from_circular_queue(primary_data);
                 submenu.push(MenuItem::Content(ContentItem::new(format!(
                     "Average: {}",
                     format_fn(stats.mean)
@@ -747,8 +756,8 @@ fn build_submenu(
 
     // Dataset duration
     let time_text = if primary_data.len() >= 2 {
-        let oldest = primary_data.front().unwrap().timestamp;
-        let newest = primary_data.back().unwrap().timestamp;
+        let oldest = primary_data.iter().last().unwrap().timestamp; // Last item is oldest
+        let newest = primary_data.iter().next().unwrap().timestamp; // First item is newest
         insights.time_context(oldest, newest)
     } else if primary_data.len() == 1 {
         insights.time_context(0, 0)
@@ -767,8 +776,8 @@ fn build_submenu(
 
 fn calculate_total_system_memory(history: &AllMetricsHistory) -> f64 {
     if let (Some(latest_used_gb), Some(latest_percent)) = (
-        history.used_memory_gb.back(),
-        history.memory_usage_percent.back(),
+        history.used_memory_gb.iter().next(),
+        history.memory_usage_percent.iter().next(),
     ) {
         let used_memory_gb = latest_used_gb.value;
         let memory_percent = latest_percent.value;
@@ -794,7 +803,7 @@ fn format_memory_mb(mb: f64) -> String {
     if mb >= 1024.0 {
         format!("{:.1} GB", mb / 1024.0)
     } else {
-        format!("{:.0} MB", mb)
+        format!("{mb:.0} MB")
     }
 }
 
@@ -819,7 +828,7 @@ pub fn build_menu(state: &PluginState) -> crate::Result<String> {
     if let Some(ref all_metrics) = state.current_all_metrics {
         let mut sorted_models = all_metrics.models.clone();
         sorted_models.sort_by(|a, b| a.model_name.cmp(&b.model_name));
-        
+
         for model_metrics in &sorted_models {
             if let Some(model_history) = state
                 .metrics_history
@@ -946,7 +955,7 @@ mod tests {
                     predicted_tokens_per_sec: 15.0,
                     requests_processing: 0,
                     requests_deferred: 0,
-                    
+
                     n_decode_total: 100,
                     memory_mb: 1000.0,
                 },

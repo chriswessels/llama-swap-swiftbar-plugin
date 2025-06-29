@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ProcessInfo {
     pub pid: u32,
     pub name: String,
@@ -92,10 +93,7 @@ fn parse_prometheus_metrics(text: &str) -> HashMap<String, f64> {
         .collect()
 }
 
-pub fn collect_system_metrics() -> SystemMetrics {
-    use sysinfo::System;
-
-    let mut system = System::new_all();
+pub fn collect_system_metrics(system: &mut sysinfo::System) -> SystemMetrics {
     system.refresh_all();
 
     // CPU usage
@@ -119,17 +117,14 @@ pub fn collect_system_metrics() -> SystemMetrics {
     }
 }
 
-pub fn get_llama_server_memory_mb() -> f64 {
-    get_detailed_llama_processes()
+pub fn get_llama_server_memory_mb(system: &sysinfo::System) -> f64 {
+    get_detailed_llama_processes(system)
         .iter()
         .map(|p| p.memory_mb)
         .sum()
 }
 
-pub fn get_detailed_llama_processes() -> Vec<ProcessInfo> {
-    use sysinfo::System;
-
-    let system = System::new_all();
+pub fn get_detailed_llama_processes(system: &sysinfo::System) -> Vec<ProcessInfo> {
     system
         .processes()
         .values()
@@ -180,14 +175,14 @@ fn infer_model_from_command(cmd_line: &str) -> Option<String> {
         if let Some(model_end) = model_part.find(' ') {
             let model_path = &model_part[..model_end];
             // Extract just the model name from the path
-            if let Some(filename) = model_path.split('/').last() {
+            if let Some(filename) = model_path.split('/').next_back() {
                 // Remove .gguf extension if present
                 let model_name = filename.strip_suffix(".gguf").unwrap_or(filename);
                 return Some(model_name.to_string());
             }
         } else {
             // Model is the last argument
-            if let Some(filename) = model_part.split('/').last() {
+            if let Some(filename) = model_part.split('/').next_back() {
                 let model_name = filename.strip_suffix(".gguf").unwrap_or(filename);
                 return Some(model_name.to_string());
             }
@@ -199,7 +194,7 @@ fn infer_model_from_command(cmd_line: &str) -> Option<String> {
         let port_part = &cmd_line[port_start + 7..];
         if let Some(port_end) = port_part.find(' ') {
             let port = &port_part[..port_end];
-            return Some(format!("Port {}", port));
+            return Some(format!("Port {port}"));
         } else if !port_part.is_empty() {
             return Some(format!("Port {}", port_part.trim()));
         }
@@ -253,8 +248,9 @@ pub fn fetch_all_metrics(client: &Client) -> crate::Result<AllMetrics> {
 
     let running_response: RunningResponse = with_context(response.json(), PARSE_JSON)?;
 
-    let llama_memory_mb = get_llama_server_memory_mb();
-    let system_metrics = collect_system_metrics();
+    let mut system = sysinfo::System::new_all();
+    let llama_memory_mb = get_llama_server_memory_mb(&system);
+    let system_metrics = collect_system_metrics(&mut system);
 
     let models = running_response
         .running

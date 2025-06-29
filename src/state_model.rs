@@ -9,6 +9,7 @@ pub enum NotReadyReason {
 
 /// Simplified agent states
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(dead_code)]
 pub enum AgentState {
     NotReady { reason: NotReadyReason },
     Stopped,

@@ -6,7 +6,7 @@ use std::error::Error;
 use std::time::{Duration, Instant};
 
 /// Detailed service status tracking different layers of service management
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct ServiceStatus {
     pub plist_installed: bool,
     pub launchctl_loaded: bool,
@@ -37,11 +37,13 @@ impl ServiceStatus {
     }
 
     /// Service is ready to start (plist installed but not running)
+    #[allow(dead_code)]
     pub fn is_ready_to_start(&self) -> bool {
         self.plist_installed && !self.process_running
     }
 
     /// Service has issues that need user attention
+    #[allow(dead_code)]
     pub fn has_issues(&self) -> bool {
         // Process running but API not responding, or loaded but not running
         (self.process_running && !self.api_responsive)
@@ -110,6 +112,7 @@ pub struct PluginState {
 
     // Timing for state transitions
     last_state_change: Instant,
+    #[allow(dead_code)]
     startup_time: Option<Instant>,
 }
 
@@ -202,38 +205,39 @@ impl PluginState {
 
     pub fn update_state(&mut self) {
         // Always collect system metrics regardless of API state
-        let system_metrics = crate::metrics::collect_system_metrics();
-        let llama_memory_mb = crate::metrics::get_llama_server_memory_mb();
+        let mut system = sysinfo::System::new_all();
+        let system_metrics = crate::metrics::collect_system_metrics(&mut system);
+        let llama_memory_mb = crate::metrics::get_llama_server_memory_mb(&system);
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
 
-        // Store system metrics independently
-        crate::models::DataAnalyzer::push_value_to_deque(
-            &mut self.metrics_history.cpu_usage_percent,
-            system_metrics.cpu_usage_percent,
-            timestamp,
-            self.metrics_history.max_size,
-        );
-        crate::models::DataAnalyzer::push_value_to_deque(
-            &mut self.metrics_history.memory_usage_percent,
-            system_metrics.memory_usage_percent,
-            timestamp,
-            self.metrics_history.max_size,
-        );
-        crate::models::DataAnalyzer::push_value_to_deque(
-            &mut self.metrics_history.used_memory_gb,
-            system_metrics.used_memory_gb,
-            timestamp,
-            self.metrics_history.max_size,
-        );
-        crate::models::DataAnalyzer::push_value_to_deque(
-            &mut self.metrics_history.total_llama_memory_mb,
-            llama_memory_mb,
-            timestamp,
-            self.metrics_history.max_size,
-        );
+        // Store system metrics independently using CircularQueue direct push
+        self.metrics_history
+            .cpu_usage_percent
+            .push(crate::models::TimestampedValue {
+                timestamp,
+                value: system_metrics.cpu_usage_percent,
+            });
+        self.metrics_history
+            .memory_usage_percent
+            .push(crate::models::TimestampedValue {
+                timestamp,
+                value: system_metrics.memory_usage_percent,
+            });
+        self.metrics_history
+            .used_memory_gb
+            .push(crate::models::TimestampedValue {
+                timestamp,
+                value: system_metrics.used_memory_gb,
+            });
+        self.metrics_history
+            .total_llama_memory_mb
+            .push(crate::models::TimestampedValue {
+                timestamp,
+                value: llama_memory_mb,
+            });
 
         // Check API connectivity first, then update agent state based on that
         let api_success = match crate::metrics::fetch_all_metrics(&self.http_client) {
@@ -296,7 +300,9 @@ impl PluginState {
                 .metrics_history
                 .models
                 .entry(model_metrics.model_name.clone())
-                .or_insert_with(|| crate::models::MetricsHistory::with_capacity(self.metrics_history.max_size));
+                .or_insert_with(|| {
+                    crate::models::MetricsHistory::with_capacity(self.metrics_history.max_size)
+                });
             history.push(&model_metrics.metrics);
         }
 
@@ -324,7 +330,7 @@ impl PluginState {
         // All metrics (system, model, llama memory) are preserved within the 5-minute retention window
         // Natural time-based cleanup will handle old data automatically
         self.current_all_metrics = None;
-        
+
         // Note: All historical metrics (system, model, llama memory) are preserved across API failures
         // and service issues, only cleaned up by the natural 5-minute retention window
     }

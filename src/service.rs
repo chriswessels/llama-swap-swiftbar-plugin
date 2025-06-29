@@ -18,7 +18,7 @@ pub fn is_service_running() -> bool {
         .output()
         .ok()
         .filter(|result| result.status.success())
-        .and_then(|result| {
+        .map(|result| {
             let output_str = String::from_utf8_lossy(&result.stdout);
 
             // Check if the output contains a PID (indicating the process is actually running)
@@ -34,12 +34,12 @@ pub fn is_service_running() -> bool {
                                 .trim_end_matches(';')
                                 .trim_matches('"')
                                 .trim();
-                            return Some(pid_clean.parse::<i32>().is_ok() && pid_clean != "0");
+                            return pid_clean.parse::<i32>().is_ok() && pid_clean != "0";
                         }
                     }
                 }
             }
-            Some(false)
+            false
         })
         .unwrap_or(false)
 }
