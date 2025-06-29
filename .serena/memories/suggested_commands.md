@@ -17,13 +17,17 @@ cargo watch -x run
 # Run all tests
 cargo test
 
-# Run specific test
-cargo test test_menu_generation
+# Run specific test file
+cargo test --test metrics_tests
+cargo test --test install_ux_tests
+
+# Run specific test function
+cargo test test_collect_system_metrics_returns_valid_data
 
 # Run with output
 cargo test -- --nocapture
 
-# Run benchmarks
+# Run benchmarks (if available)
 cargo bench
 ```
 
@@ -38,8 +42,8 @@ cargo fmt -- --check
 # Run linter
 cargo clippy
 
-# Run linter with all targets
-cargo clippy --all-targets --all-features
+# Run linter with all targets and features (enforce zero warnings)
+cargo clippy --all-targets --all-features -- -D warnings
 ```
 
 ## Running the Plugin
@@ -49,7 +53,11 @@ LLAMA_SWAP_DEBUG=1 cargo run
 
 # Test specific commands
 cargo run -- do_start
+cargo run -- do_stop
+cargo run -- do_restart
 cargo run -- view_logs
+cargo run -- install_service
+cargo run -- uninstall_service
 
 # Run with specific environment
 RUST_BACKTRACE=1 cargo run
@@ -66,16 +74,10 @@ cargo doc --document-private-items
 
 ## Utility Commands (macOS)
 ```bash
-# List files
-ls -la
-
-# Change directory
-cd <path>
-
 # Search for files
 find . -name "*.rs"
 
-# Search in files (use ripgrep on macOS)
+# Search in files (use ripgrep)
 rg "pattern" --type rust
 
 # Git operations
@@ -92,4 +94,14 @@ strip target/release/llama-swap-swiftbar
 
 # Check binary size
 du -h target/release/llama-swap-swiftbar
+```
+
+## Development Testing
+```bash
+# Test install flow
+cargo run -- install_service
+
+# Test service management
+launchctl list | grep llama-swap
+launchctl print gui/$(id -u)/com.llama-swap.agent
 ```
