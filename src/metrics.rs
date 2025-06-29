@@ -185,8 +185,8 @@ fn infer_model_from_command(cmd_line: &str) -> Option<String> {
 fn fetch_model_metrics(client: &Client, model: &RunningModel) -> HashMap<String, f64> {
     let url = format!(
         "{}:{}/upstream/{}/metrics",
-        constants::API_BASE_URL,
-        constants::API_PORT,
+        *constants::API_BASE_URL,
+        *constants::API_PORT,
         model.model.replace(':', "%3A")
     );
 
@@ -215,8 +215,8 @@ fn create_metrics_from_data(data: &HashMap<String, f64>) -> Metrics {
 pub fn fetch_all_metrics(client: &Client) -> crate::Result<AllMetrics> {
     let url = format!(
         "{}:{}/running",
-        constants::API_BASE_URL,
-        constants::API_PORT
+        *constants::API_BASE_URL,
+        *constants::API_PORT
     );
 
     let response = with_context(client.get(&url).send(), CONNECT_API)?;

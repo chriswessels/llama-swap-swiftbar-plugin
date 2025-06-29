@@ -54,7 +54,7 @@ fn run() -> Result<()> {
 
     let is_swiftbar = std::env::var("SWIFTBAR").is_ok();
 
-    if constants::STREAMING_MODE && is_swiftbar {
+    if *constants::STREAMING_MODE && is_swiftbar {
         run_streaming_mode()
     } else {
         run_once()

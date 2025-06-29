@@ -14,8 +14,8 @@ pub fn handle_command(command: &str) -> crate::Result<()> {
         "do_install" => install_service(),
         "do_uninstall" => uninstall_service(),
         "open_ui" => open_ui(),
-        "view_logs" => view_file(crate::constants::LOG_FILE_PATH, create_default_log),
-        "view_config" => view_file(crate::constants::CONFIG_FILE_PATH, create_default_config),
+        "view_logs" => view_file(&crate::constants::LOG_FILE_PATH, create_default_log),
+        "view_config" => view_file(&crate::constants::CONFIG_FILE_PATH, create_default_config),
         _ => Err(format!("Unknown command: {command}").into()),
     }
 }
@@ -108,8 +108,8 @@ fn unload_models() -> crate::Result<()> {
     let client = reqwest::blocking::Client::new();
     let url = format!(
         "{}:{}/unload",
-        crate::constants::API_BASE_URL,
-        crate::constants::API_PORT
+        *crate::constants::API_BASE_URL,
+        *crate::constants::API_PORT
     );
 
     let response = with_context(
@@ -147,7 +147,11 @@ fn view_file(file_path: &str, default_content_fn: fn() -> &'static str) -> crate
 }
 
 fn open_ui() -> crate::Result<()> {
-    let ui_url = format!("{}:{}/ui/models", crate::constants::API_BASE_URL, crate::constants::API_PORT);
+    let ui_url = format!(
+        "{}:{}/ui/models",
+        *crate::constants::API_BASE_URL,
+        *crate::constants::API_PORT
+    );
 
     let output = with_context(Command::new("open").arg(ui_url).output(), EXEC_COMMAND)?;
 
@@ -335,10 +339,10 @@ pub fn find_llama_swap_binary() -> crate::Result<String> {
 }
 
 fn generate_plist_content(binary_path: &str) -> crate::Result<String> {
-    let log_path = expand_tilde(crate::constants::LOG_FILE_PATH)?;
+    let log_path = expand_tilde(&crate::constants::LOG_FILE_PATH)?;
     let working_dir = get_home_dir()?;
 
-    let config_path = expand_tilde(crate::constants::CONFIG_FILE_PATH)?;
+    let config_path = expand_tilde(&crate::constants::CONFIG_FILE_PATH)?;
 
     let plist = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -370,7 +374,7 @@ fn generate_plist_content(binary_path: &str) -> crate::Result<String> {
         LAUNCH_AGENT_LABEL,
         binary_path,
         config_path,
-        crate::constants::API_PORT,
+        *crate::constants::API_PORT,
         working_dir,
         log_path,
         log_path

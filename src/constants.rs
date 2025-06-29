@@ -1,22 +1,68 @@
+use std::env;
+use std::sync::LazyLock;
+
 // Service configuration
-pub const LAUNCH_AGENT_LABEL: &str = "com.user.llama-swap";
+pub const LAUNCH_AGENT_LABEL: &str = "com.user.llama-swap"; // This one stays const as it's rarely changed
 
-// API configuration
-pub const API_BASE_URL: &str = "http://127.0.0.1";
-pub const API_PORT: u16 = 45786;
-pub const API_TIMEOUT_SECS: u64 = 1;
+// API configuration (configurable via env vars)
+pub static API_BASE_URL: LazyLock<String> = LazyLock::new(|| {
+    env::var("LLAMA_SWAP_API_BASE_URL").unwrap_or_else(|_| "http://127.0.0.1".to_string())
+});
 
-// Update timing
-pub const STREAMING_MODE: bool = true;
+pub static API_PORT: LazyLock<u16> = LazyLock::new(|| {
+    env::var("LLAMA_SWAP_API_PORT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(45786)
+});
 
-// Chart configuration
-pub const CHART_WIDTH: u32 = 60;
-pub const CHART_HEIGHT: u32 = 20;
-pub const HISTORY_SIZE: usize = 300; // 5 minutes at 1-second intervals
+pub static API_TIMEOUT_SECS: LazyLock<u64> = LazyLock::new(|| {
+    env::var("LLAMA_SWAP_API_TIMEOUT_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1)
+});
 
-// File paths (using home directory expansion)
-pub const LOG_FILE_PATH: &str = "~/Library/Logs/LlamaSwap.log";
-pub const CONFIG_FILE_PATH: &str = "~/.llamaswap/config.yaml";
+// Update timing (configurable via env vars)
+pub static STREAMING_MODE: LazyLock<bool> = LazyLock::new(|| {
+    env::var("LLAMA_SWAP_STREAMING_MODE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(true)
+});
+
+// Chart configuration (configurable via env vars)
+pub static CHART_WIDTH: LazyLock<u32> = LazyLock::new(|| {
+    env::var("LLAMA_SWAP_CHART_WIDTH")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(60)
+});
+
+pub static CHART_HEIGHT: LazyLock<u32> = LazyLock::new(|| {
+    env::var("LLAMA_SWAP_CHART_HEIGHT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(20)
+});
+
+pub static HISTORY_SIZE: LazyLock<usize> = LazyLock::new(|| {
+    env::var("LLAMA_SWAP_HISTORY_SIZE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(300) // 5 minutes at 1-second intervals
+});
+
+// File paths (configurable via env vars, using home directory expansion)
+pub static LOG_FILE_PATH: LazyLock<String> = LazyLock::new(|| {
+    env::var("LLAMA_SWAP_LOG_FILE_PATH")
+        .unwrap_or_else(|_| "~/Library/Logs/LlamaSwap.log".to_string())
+});
+
+pub static CONFIG_FILE_PATH: LazyLock<String> = LazyLock::new(|| {
+    env::var("LLAMA_SWAP_CONFIG_FILE_PATH")
+        .unwrap_or_else(|_| "~/.llamaswap/config.yaml".to_string())
+});
 
 pub const COLOR_TPS_LINE: (u8, u8, u8) = (0, 255, 127); // Spring green - Generation speed
 pub const COLOR_PROMPT_LINE: (u8, u8, u8) = (255, 215, 0); // Gold - Prompt speed

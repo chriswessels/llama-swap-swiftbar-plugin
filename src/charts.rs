@@ -27,7 +27,7 @@ impl MetricType {
 
 /// Generate a sparkline chart with semantic colors and smart bounds
 pub fn generate_sparkline(data: &[f64], metric_type: MetricType) -> crate::Result<DynamicImage> {
-    generate_sparkline_with_size(data, metric_type, CHART_WIDTH, CHART_HEIGHT)
+    generate_sparkline_with_size(data, metric_type, *CHART_WIDTH, *CHART_HEIGHT)
 }
 
 /// Generate a sparkline chart with custom dimensions
@@ -163,8 +163,8 @@ mod tests {
         assert!(result.is_ok());
 
         let img = result.unwrap();
-        assert_eq!(img.width(), CHART_WIDTH);
-        assert_eq!(img.height(), CHART_HEIGHT);
+        assert_eq!(img.width(), *CHART_WIDTH);
+        assert_eq!(img.height(), *CHART_HEIGHT);
     }
 
     #[test]

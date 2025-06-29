@@ -103,7 +103,7 @@ pub struct PluginState {
 impl PluginState {
     pub fn new() -> Result<Self> {
         let http_client = Client::builder()
-            .timeout(Duration::from_secs(crate::constants::API_TIMEOUT_SECS))
+            .timeout(Duration::from_secs(*crate::constants::API_TIMEOUT_SECS))
             .build()?;
 
         // Initialize service status

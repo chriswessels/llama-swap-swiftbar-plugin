@@ -187,7 +187,7 @@ impl Default for MetricsHistory {
 
 impl MetricsHistory {
     pub fn new() -> Self {
-        Self::with_capacity(crate::constants::HISTORY_SIZE)
+        Self::with_capacity(*crate::constants::HISTORY_SIZE)
     }
 
     pub fn with_capacity(capacity: usize) -> Self {
@@ -260,7 +260,7 @@ impl Default for AllMetricsHistory {
 
 impl AllMetricsHistory {
     pub fn new() -> Self {
-        Self::with_capacity(crate::constants::HISTORY_SIZE)
+        Self::with_capacity(*crate::constants::HISTORY_SIZE)
     }
 
     pub fn with_capacity(capacity: usize) -> Self {

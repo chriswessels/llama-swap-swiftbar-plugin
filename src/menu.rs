@@ -69,14 +69,12 @@ static CONTROL_COMMANDS: &[MenuCommand] = &[
     },
 ];
 
-static FILE_COMMANDS: &[MenuCommand] = &[
-    MenuCommand {
-        icon: ":gearshape:",
-        label: "Edit Llama-Swap Configuration",
-        action: "view_config",
-        states: &[], // Available in all states
-    },
-];
+static FILE_COMMANDS: &[MenuCommand] = &[MenuCommand {
+    icon: ":gearshape:",
+    label: "Edit Llama-Swap Configuration",
+    action: "view_config",
+    states: &[], // Available in all states
+}];
 static UI_COMMAND: MenuCommand = MenuCommand {
     icon: ":globe:",
     label: "Open Llama-Swap UI",
@@ -465,7 +463,9 @@ impl MenuBuilder {
                     }
                 }
                 // Secondary action: stop service if UI not available
-                else if let Some(stop_cmd) = CONTROL_COMMANDS.iter().find(|c| c.action == "do_stop") {
+                else if let Some(stop_cmd) =
+                    CONTROL_COMMANDS.iter().find(|c| c.action == "do_stop")
+                {
                     if let Ok(item) = stop_cmd.create_item(exe_str) {
                         actions.push(item);
                     }
