@@ -3,10 +3,9 @@ name: CI
 on:
   push:
     branches: [ main, develop ]
+    tags: [ 'v*' ]  # Trigger on semver tags like v1.0.0
   pull_request:
     branches: [ main ]
-  release:
-    types: [ published ]
 
 env:
   CARGO_TERM_COLOR: always
@@ -112,7 +111,7 @@ jobs:
     name: Create Release
     runs-on: macos-latest
     needs: build-macos
-    if: github.event_name == 'release'
+    if: startsWith(github.ref, 'refs/tags/v')
     
     steps:
       - name: Checkout code
@@ -145,7 +144,7 @@ jobs:
           cp ./artifacts/llama-swap-swiftbar-x64 release/
           
           # Copy shell script wrapper
-          cp scripts/llama-swap-swiftbar.sh release/
+          cp example-scripts/llama-swap-swiftbar.sh release/
           chmod +x release/llama-swap-swiftbar.sh
           
           # Create zip archives
