@@ -643,7 +643,7 @@ fn build_label(
     match display_type {
         MetricDisplayType::Simple => format!("{}: {}", name, format_fn(insights.current)),
         MetricDisplayType::SystemMemory => {
-            let gb_current = secondary_data.unwrap().iter().next().unwrap().value; // First item is newest in CircularQueue
+            let gb_current = secondary_data.unwrap().iter().next().unwrap().value; // Most recent value
             format!("{}: {:.1} GB ({:.1}%)", name, gb_current, insights.current)
         }
     }
@@ -654,11 +654,11 @@ fn add_chart(
     data: &CircularQueue<TimestampedValue>,
     chart_type: charts::MetricType,
 ) {
-    // Convert CircularQueue to Vec<f64> in oldest-to-newest order for charts
-    let values = data.iter().rev().map(|tv| tv.value).collect();
+    // Generate chart data in chronological order
+    let values: Vec<f64> = data.iter().rev().map(|tv| tv.value).collect();
     if let Ok(chart) = charts::generate_sparkline(&values, chart_type) {
         if let Ok(chart_image) = icons::chart_to_menu_image(&chart) {
-            // We need to replace the item content, not clone it
+            // Replace item content with chart visualization
             let text = item.text.clone();
             *item = ContentItem::new(text).image(chart_image).unwrap();
         }
@@ -688,7 +688,7 @@ fn build_submenu(
     // Current value
     let current_text = match display_type {
         MetricDisplayType::SystemMemory => {
-            let gb_current = secondary_data.unwrap().iter().next().unwrap().value; // First item is newest
+            let gb_current = secondary_data.unwrap().iter().next().unwrap().value; // Current memory usage
             format!("Current: {:.1} GB ({:.1}%)", gb_current, insights.current)
         }
         MetricDisplayType::Simple => format!("Current: {}", format_fn(insights.current)),
@@ -711,7 +711,7 @@ fn build_submenu(
             MetricDisplayType::SystemMemory => {
                 // Add total system memory and available memory context
                 let total_system_memory_gb = calculate_total_system_memory(system_history.unwrap());
-                let current_used_gb = secondary_data.unwrap().iter().next().unwrap().value; // First item is newest
+                let current_used_gb = secondary_data.unwrap().iter().next().unwrap().value; // Current memory usage
                 let available_gb = total_system_memory_gb - current_used_gb;
 
                 submenu.push(MenuItem::Content(ContentItem::new(format!(
@@ -725,7 +725,7 @@ fn build_submenu(
                 if let Some(secondary) = secondary_data {
                     if secondary.len() > 1 {
                         let gb_values: Vec<f64> =
-                            secondary.iter().rev().map(|tv| tv.value).collect(); // Use oldest-to-newest for stats
+                            secondary.iter().rev().map(|tv| tv.value).collect(); // Chronological order for statistics
                         let gb_sum: f64 = gb_values.iter().sum();
                         let gb_avg = gb_sum / gb_values.len() as f64;
                         let avg_percent = (gb_avg / total_system_memory_gb) * 100.0;
@@ -756,8 +756,8 @@ fn build_submenu(
 
     // Dataset duration
     let time_text = if primary_data.len() >= 2 {
-        let oldest = primary_data.iter().last().unwrap().timestamp; // Last item is oldest
-        let newest = primary_data.iter().next().unwrap().timestamp; // First item is newest
+        let oldest = primary_data.iter().last().unwrap().timestamp; // Earliest timestamp
+        let newest = primary_data.iter().next().unwrap().timestamp; // Latest timestamp
         insights.time_context(oldest, newest)
     } else if primary_data.len() == 1 {
         insights.time_context(0, 0)
@@ -960,12 +960,7 @@ mod tests {
                     memory_mb: 1000.0,
                 },
             }],
-            total_llama_memory_mb: 1000.0,
-            system_metrics: crate::models::SystemMetrics {
-                cpu_usage_percent: 25.0,
-                used_memory_gb: 8.0,
-                memory_usage_percent: 50.0,
-            },
+
         };
         state.current_all_metrics = Some(dummy_metrics);
 

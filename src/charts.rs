@@ -1,17 +1,16 @@
 use crate::constants::{
-    CHART_HEIGHT, CHART_WIDTH, COLOR_KV_CACHE_LINE, COLOR_MEM_LINE, COLOR_PROMPT_LINE,
+    CHART_HEIGHT, CHART_WIDTH, COLOR_MEM_LINE, COLOR_PROMPT_LINE,
     COLOR_QUEUE_LINE, COLOR_TPS_LINE,
 };
 use image::{DynamicImage, Rgba, RgbaImage};
-use std::collections::VecDeque;
+// Charts operate on Vec<f64> data for visualization
 
 #[derive(Clone, Copy)]
-#[allow(dead_code)]
 pub enum MetricType {
     Tps,
     Memory,
     Prompt,
-    KvCache,
+
     Queue,
 }
 
@@ -21,23 +20,20 @@ impl MetricType {
             Self::Tps => COLOR_TPS_LINE,
             Self::Memory => COLOR_MEM_LINE,
             Self::Prompt => COLOR_PROMPT_LINE,
-            Self::KvCache => COLOR_KV_CACHE_LINE,
+
             Self::Queue => COLOR_QUEUE_LINE,
         }
     }
 }
 
 /// Generate a sparkline chart with semantic colors and smart bounds
-pub fn generate_sparkline(
-    data: &VecDeque<f64>,
-    metric_type: MetricType,
-) -> crate::Result<DynamicImage> {
+pub fn generate_sparkline(data: &[f64], metric_type: MetricType) -> crate::Result<DynamicImage> {
     generate_sparkline_with_size(data, metric_type, CHART_WIDTH, CHART_HEIGHT)
 }
 
 /// Generate a sparkline chart with custom dimensions
 pub fn generate_sparkline_with_size(
-    data: &VecDeque<f64>,
+    data: &[f64],
     metric_type: MetricType,
     width: u32,
     height: u32,
@@ -48,7 +44,7 @@ pub fn generate_sparkline_with_size(
         return Ok(DynamicImage::ImageRgba8(img));
     }
 
-    let data_vec: Vec<f64> = data.iter().copied().collect();
+    let data_vec: Vec<f64> = data.to_vec();
     let (min_val, max_val) = calculate_bounds(&data_vec);
     let scale = if max_val > min_val {
         f64::from(height - 1) / (max_val - min_val)
@@ -162,10 +158,7 @@ mod tests {
 
     #[test]
     fn test_sparkline_generation() {
-        let mut data = VecDeque::new();
-        for i in 0..10 {
-            data.push_back(f64::from(i));
-        }
+        let data: Vec<f64> = (0..10).map(f64::from).collect();
 
         let result = generate_sparkline(&data, MetricType::Tps);
         assert!(result.is_ok());
@@ -177,15 +170,14 @@ mod tests {
 
     #[test]
     fn test_empty_data() {
-        let data = VecDeque::new();
+        let data: Vec<f64> = Vec::new();
         let result = generate_sparkline(&data, MetricType::Memory);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_single_point() {
-        let mut data = VecDeque::new();
-        data.push_back(42.0);
+        let data = vec![42.0];
 
         let result = generate_sparkline(&data, MetricType::Prompt);
         assert!(result.is_ok());
@@ -193,11 +185,9 @@ mod tests {
 
     #[test]
     fn test_custom_size() {
-        let mut data = VecDeque::new();
-        data.push_back(1.0);
-        data.push_back(2.0);
+        let data = vec![1.0, 2.0];
 
-        let result = generate_sparkline_with_size(&data, MetricType::KvCache, 100, 20);
+        let result = generate_sparkline_with_size(&data, MetricType::Queue, 100, 20);
         assert!(result.is_ok());
 
         let img = result.unwrap();

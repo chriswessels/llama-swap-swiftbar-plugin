@@ -36,20 +36,6 @@ impl ServiceStatus {
         self.plist_installed && self.launchctl_loaded && self.process_running && self.api_responsive
     }
 
-    /// Service is ready to start (plist installed but not running)
-    #[allow(dead_code)]
-    pub fn is_ready_to_start(&self) -> bool {
-        self.plist_installed && !self.process_running
-    }
-
-    /// Service has issues that need user attention
-    #[allow(dead_code)]
-    pub fn has_issues(&self) -> bool {
-        // Process running but API not responding, or loaded but not running
-        (self.process_running && !self.api_responsive)
-            || (self.launchctl_loaded && !self.process_running)
-    }
-
     /// Get user-friendly status description
     pub fn status_description(&self) -> &'static str {
         match (
@@ -112,8 +98,7 @@ pub struct PluginState {
 
     // Timing for state transitions
     last_state_change: Instant,
-    #[allow(dead_code)]
-    startup_time: Option<Instant>,
+
 }
 
 impl PluginState {
@@ -144,7 +129,7 @@ impl PluginState {
             model_states: HashMap::new(),
             service_status,
             last_state_change: Instant::now(),
-            startup_time: None,
+
         })
     }
 
@@ -301,7 +286,7 @@ impl PluginState {
                 .models
                 .entry(model_metrics.model_name.clone())
                 .or_insert_with(|| {
-                    crate::models::MetricsHistory::with_capacity(self.metrics_history.max_size)
+                    crate::models::MetricsHistory::new()
                 });
             history.push(&model_metrics.metrics);
         }
@@ -360,7 +345,7 @@ impl PluginState {
     pub fn get_display_state(&self) -> DisplayState {
         match self.agent_state {
             AgentState::NotReady { .. } => DisplayState::AgentNotLoaded,
-            AgentState::Starting => DisplayState::AgentStarting,
+
             AgentState::Stopped => DisplayState::ServiceStopped, // Fix: Ready to start
             AgentState::Running => {
                 if self.model_states.is_empty() {

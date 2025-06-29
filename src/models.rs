@@ -1,6 +1,6 @@
 use circular_queue::CircularQueue;
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
+
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -48,10 +48,6 @@ pub struct SystemMetrics {
 #[derive(Debug, Clone)]
 pub struct AllMetrics {
     pub models: Vec<ModelMetrics>,
-    #[allow(dead_code)]
-    pub total_llama_memory_mb: f64,
-    #[allow(dead_code)]
-    pub system_metrics: SystemMetrics,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -131,65 +127,19 @@ impl MetricStats {
 pub struct DataAnalyzer;
 
 impl DataAnalyzer {
-    #[allow(dead_code)]
-    pub fn get_stats(data: &VecDeque<TimestampedValue>) -> MetricStats {
-        if data.is_empty() {
-            return MetricStats::default();
-        }
 
-        let values: Vec<f64> = data.iter().map(|tv| tv.value).collect();
-        let sum: f64 = values.iter().sum();
-        let count = values.len() as f64;
-        let mean = sum / count;
-        let current = data.back().unwrap().value;
-
-        let min = values.iter().fold(f64::INFINITY, |a, &b| a.min(b));
-        let max = values.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
-
-        let variance = values.iter().map(|&v| (v - mean).powi(2)).sum::<f64>() / count;
-        let std_dev = variance.sqrt();
-
-        MetricStats {
-            mean,
-            min,
-            max,
-            std_dev,
-            count: values.len(),
-            current,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn push_value_to_deque(
-        deque: &mut VecDeque<TimestampedValue>,
-        value: f64,
-        timestamp: u64,
-        max_size: usize,
-    ) {
-        deque.push_back(TimestampedValue { timestamp, value });
-        while deque.len() > max_size {
-            deque.pop_front();
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn trim_deque(deque: &mut VecDeque<TimestampedValue>, cutoff: u64) {
-        while deque.front().is_some_and(|v| v.timestamp < cutoff) {
-            deque.pop_front();
-        }
-    }
 
     pub fn get_stats_from_circular_queue(cq: &CircularQueue<TimestampedValue>) -> MetricStats {
         if cq.is_empty() {
             return MetricStats::default();
         }
 
-        // Use iter().rev() to get oldest-to-newest order (like VecDeque)
+        // Convert to oldest-to-newest order for consistent statistics
         let values: Vec<f64> = cq.iter().rev().map(|tv| tv.value).collect();
         let sum: f64 = values.iter().sum();
         let count = values.len() as f64;
         let mean = sum / count;
-        let current = cq.iter().next().unwrap().value; // First in CircularQueue is newest
+        let current = cq.iter().next().unwrap().value; // Most recent value
 
         let min = values.iter().fold(f64::INFINITY, |a, &b| a.min(b));
         let max = values.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
@@ -208,17 +158,14 @@ impl DataAnalyzer {
     }
 
     pub fn trim_circular_queue(cq: &mut CircularQueue<TimestampedValue>, cutoff: u64) {
-        // For CircularQueue, we need to rebuild with only valid entries
-        // Use rev() to get oldest-to-newest order, then push in that order
-        // so that newest ends up being the first in CircularQueue iteration
+        // Rebuild queue with only entries newer than cutoff timestamp
         let valid_entries: Vec<TimestampedValue> = cq
             .iter()
-            .rev() // Get oldest-to-newest order
+            .rev() // Oldest-to-newest order
             .filter(|v| v.timestamp >= cutoff)
             .cloned()
             .collect();
 
-        // Clear and rebuild (pushing oldest first, newest last)
         cq.clear();
         for entry in valid_entries {
             cq.push(entry);
@@ -233,9 +180,7 @@ pub struct MetricsHistory {
     pub memory_mb: CircularQueue<TimestampedValue>,
     pub queue_size: CircularQueue<TimestampedValue>,
 
-    #[serde(skip)]
-    #[allow(dead_code)]
-    pub max_size: usize,
+
 }
 
 impl Default for MetricsHistory {
@@ -255,14 +200,14 @@ impl MetricsHistory {
             prompt_tps: CircularQueue::with_capacity(capacity),
             memory_mb: CircularQueue::with_capacity(capacity),
             queue_size: CircularQueue::with_capacity(capacity),
-            max_size: capacity,
+
         }
     }
 
     pub fn push(&mut self, metrics: &Metrics) {
         let timestamp = current_timestamp();
 
-        // CircularQueue automatically handles capacity, no manual size management needed
+        // CircularQueue manages capacity automatically
         self.tps.push(TimestampedValue {
             timestamp,
             value: metrics.predicted_tokens_per_sec,
@@ -311,9 +256,7 @@ pub struct AllMetricsHistory {
     pub memory_usage_percent: CircularQueue<TimestampedValue>,
     pub used_memory_gb: CircularQueue<TimestampedValue>,
 
-    #[serde(skip)]
-    #[allow(dead_code)]
-    pub max_size: usize,
+
 }
 
 impl Default for AllMetricsHistory {
@@ -334,44 +277,11 @@ impl AllMetricsHistory {
             cpu_usage_percent: CircularQueue::with_capacity(capacity),
             memory_usage_percent: CircularQueue::with_capacity(capacity),
             used_memory_gb: CircularQueue::with_capacity(capacity),
-            max_size: capacity,
+
         }
     }
 
-    #[allow(dead_code)]
-    pub fn push(&mut self, all_metrics: &AllMetrics) {
-        let timestamp = current_timestamp();
 
-        // CircularQueue automatically handles capacity
-        self.total_llama_memory_mb.push(TimestampedValue {
-            timestamp,
-            value: all_metrics.total_llama_memory_mb,
-        });
-
-        let sys = &all_metrics.system_metrics;
-        self.cpu_usage_percent.push(TimestampedValue {
-            timestamp,
-            value: sys.cpu_usage_percent,
-        });
-        self.memory_usage_percent.push(TimestampedValue {
-            timestamp,
-            value: sys.memory_usage_percent,
-        });
-        self.used_memory_gb.push(TimestampedValue {
-            timestamp,
-            value: sys.used_memory_gb,
-        });
-
-        for model_metrics in &all_metrics.models {
-            let history = self
-                .models
-                .entry(model_metrics.model_name.clone())
-                .or_insert_with(|| MetricsHistory::with_capacity(self.max_size));
-            history.push(&model_metrics.metrics);
-        }
-
-        self.trim_old_data();
-    }
 
     pub fn trim_old_data(&mut self) {
         let cutoff = current_timestamp().saturating_sub(300); // 5 minutes

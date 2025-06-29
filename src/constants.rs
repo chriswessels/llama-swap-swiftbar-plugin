@@ -12,8 +12,7 @@ pub const STREAMING_MODE: bool = true;
 // Chart configuration
 pub const CHART_WIDTH: u32 = 60;
 pub const CHART_HEIGHT: u32 = 20;
-pub const HISTORY_SIZE: usize = 300; // 5 minutes at 1-second intervals (adaptive polling)
-                                     // TODO: ADD TIME BASED CUTOFF HERE
+pub const HISTORY_SIZE: usize = 300; // 5 minutes at 1-second intervals
 
 // File paths (using home directory expansion)
 pub const LOG_FILE_PATH: &str = "~/Library/Logs/LlamaSwap.log";
@@ -22,7 +21,6 @@ pub const CONFIG_FILE_PATH: &str = "~/.llamaswap/config.yaml";
 pub const COLOR_TPS_LINE: (u8, u8, u8) = (0, 255, 127); // Spring green - Generation speed
 pub const COLOR_PROMPT_LINE: (u8, u8, u8) = (255, 215, 0); // Gold - Prompt speed
 pub const COLOR_MEM_LINE: (u8, u8, u8) = (0, 191, 255); // Deep sky blue - Memory
-pub const COLOR_KV_CACHE_LINE: (u8, u8, u8) = (147, 112, 219); // Medium slate blue - KV cache
 pub const COLOR_QUEUE_LINE: (u8, u8, u8) = (255, 99, 71); // Tomato - Queue size
 
 // Program state color palette (RGB)

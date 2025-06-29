@@ -8,12 +8,11 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct ProcessInfo {
     pub pid: u32,
     pub name: String,
     pub memory_mb: f64,
-    pub command_line: String,
+
     pub inferred_model: Option<String>,
 }
 
@@ -21,8 +20,7 @@ pub struct ProcessInfo {
 struct PrometheusMetric {
     name: String,
     value: f64,
-    #[allow(dead_code)]
-    labels: HashMap<String, String>,
+
 }
 
 fn parse_prometheus_line(line: &str) -> Option<PrometheusMetric> {
@@ -40,30 +38,17 @@ fn parse_prometheus_line(line: &str) -> Option<PrometheusMetric> {
 
     if let Some(label_start) = metric_part.find('{') {
         let name = metric_part[..label_start].to_string();
-        let labels_str = &metric_part[label_start + 1..metric_part.len() - 1];
-        let mut labels = HashMap::new();
 
-        for label_pair in labels_str.split(',') {
-            if let Some(eq_pos) = label_pair.find('=') {
-                let key = label_pair[..eq_pos].trim().to_string();
-                let val = label_pair[eq_pos + 1..]
-                    .trim()
-                    .trim_matches('"')
-                    .to_string();
-                labels.insert(key, val);
-            }
-        }
 
         Some(PrometheusMetric {
             name,
             value,
-            labels,
         })
     } else {
         Some(PrometheusMetric {
             name: metric_part.to_string(),
             value,
-            labels: HashMap::new(),
+
         })
     }
 }
@@ -158,7 +143,7 @@ pub fn get_detailed_llama_processes(system: &sysinfo::System) -> Vec<ProcessInfo
                     pid: process.pid().as_u32(),
                     name,
                     memory_mb,
-                    command_line: cmd_line,
+
                     inferred_model,
                 })
             } else {
@@ -248,9 +233,7 @@ pub fn fetch_all_metrics(client: &Client) -> crate::Result<AllMetrics> {
 
     let running_response: RunningResponse = with_context(response.json(), PARSE_JSON)?;
 
-    let mut system = sysinfo::System::new_all();
-    let llama_memory_mb = get_llama_server_memory_mb(&system);
-    let system_metrics = collect_system_metrics(&mut system);
+
 
     let models = running_response
         .running
@@ -275,8 +258,6 @@ pub fn fetch_all_metrics(client: &Client) -> crate::Result<AllMetrics> {
 
     Ok(AllMetrics {
         models,
-        total_llama_memory_mb: llama_memory_mb,
-        system_metrics,
     })
 }
 
@@ -327,7 +308,6 @@ llamacpp:requests_processing 2";
         let metric = parse_prometheus_line(sample).unwrap();
         assert_eq!(metric.name, "llamacpp:prompt_tokens_seconds");
         assert_eq!(metric.value, 150.5);
-        assert_eq!(metric.labels.get("model"), Some(&"llama3.2:1b".to_string()));
     }
 
     #[test]
