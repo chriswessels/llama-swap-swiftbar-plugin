@@ -1,0 +1,238 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  release:
+    types: [ published ]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  test:
+    name: Test Suite
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Check formatting
+        run: cargo fmt -- --check
+
+      - name: Run clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Run tests
+        run: cargo test --verbose
+
+      - name: Test build
+        run: cargo build --verbose
+
+  build-macos:
+    name: Build macOS ARM64
+    runs-on: macos-latest
+    needs: test
+    strategy:
+      matrix:
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
+        include:
+          - target: aarch64-apple-darwin
+            arch: arm64
+          - target: x86_64-apple-darwin
+            arch: x64
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target }}-cargo-
+            ${{ runner.os }}-cargo-
+
+      - name: Build release binary
+        run: |
+          cargo build --release --target ${{ matrix.target }}
+          
+      - name: Prepare artifact
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/llama-swap-swiftbar dist/llama-swap-swiftbar-${{ matrix.arch }}
+          chmod +x dist/llama-swap-swiftbar-${{ matrix.arch }}
+          
+      - name: Verify binary
+        run: |
+          file dist/llama-swap-swiftbar-${{ matrix.arch }}
+          ls -la dist/
+          
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: llama-swap-swiftbar-${{ matrix.arch }}
+          path: dist/llama-swap-swiftbar-${{ matrix.arch }}
+          retention-days: 30
+
+  release:
+    name: Create Release
+    runs-on: macos-latest
+    needs: build-macos
+    if: github.event_name == 'release'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Download ARM64 artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: llama-swap-swiftbar-arm64
+          path: ./artifacts
+          
+      - name: Download x64 artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: llama-swap-swiftbar-x64
+          path: ./artifacts
+          
+      - name: Create universal binary
+        run: |
+          mkdir -p release
+          lipo -create -output release/llama-swap-swiftbar-universal \
+            ./artifacts/llama-swap-swiftbar-arm64 \
+            ./artifacts/llama-swap-swiftbar-x64
+          chmod +x release/llama-swap-swiftbar-universal
+          
+      - name: Prepare release assets
+        run: |
+          # Individual architecture binaries
+          cp ./artifacts/llama-swap-swiftbar-arm64 release/
+          cp ./artifacts/llama-swap-swiftbar-x64 release/
+          
+          # Copy shell script wrapper
+          cp scripts/llama-swap-swiftbar.sh release/
+          chmod +x release/llama-swap-swiftbar.sh
+          
+          # Create zip archives
+          cd release
+          zip llama-swap-swiftbar-arm64.zip llama-swap-swiftbar-arm64
+          zip llama-swap-swiftbar-x64.zip llama-swap-swiftbar-x64
+          zip llama-swap-swiftbar-universal.zip llama-swap-swiftbar-universal
+          
+          # Create convenience bundles with script + binary
+          mkdir -p bundles
+          cp llama-swap-swiftbar-arm64 bundles/ && cp llama-swap-swiftbar.sh bundles/
+          cd bundles && zip ../llama-swap-swiftbar-bundle-arm64.zip llama-swap-swiftbar-arm64 llama-swap-swiftbar.sh
+          rm llama-swap-swiftbar-arm64
+          
+          cp ../llama-swap-swiftbar-x64 . && zip ../llama-swap-swiftbar-bundle-x64.zip llama-swap-swiftbar-x64 llama-swap-swiftbar.sh
+          rm llama-swap-swiftbar-x64
+          
+          cp ../llama-swap-swiftbar-universal . && zip ../llama-swap-swiftbar-bundle-universal.zip llama-swap-swiftbar-universal llama-swap-swiftbar.sh
+          cd ..
+          
+          # Generate checksums
+          shasum -a 256 *.zip > checksums.txt
+          shasum -a 256 llama-swap-swiftbar-* >> checksums.txt
+          
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            release/llama-swap-swiftbar-arm64.zip
+            release/llama-swap-swiftbar-x64.zip
+            release/llama-swap-swiftbar-universal.zip
+            release/llama-swap-swiftbar-bundle-arm64.zip
+            release/llama-swap-swiftbar-bundle-x64.zip
+            release/llama-swap-swiftbar-bundle-universal.zip
+            release/llama-swap-swiftbar-arm64
+            release/llama-swap-swiftbar-x64
+            release/llama-swap-swiftbar-universal
+            release/llama-swap-swiftbar.sh
+            release/checksums.txt
+          body: |
+            ## Downloads
+            
+            ### Recommended: Shell Script Wrapper (Easy Configuration)
+            
+            - **Complete Bundle**: `llama-swap-swiftbar-bundle-{arch}.zip` (includes binary + wrapper script)
+            - **Shell Script**: `llama-swap-swiftbar.sh` (wrapper script only)
+            
+            ### Direct Binary Installation
+            
+            - **Apple Silicon (M1/M2/M3)**: `llama-swap-swiftbar-arm64.zip`
+            - **Intel Mac**: `llama-swap-swiftbar-x64.zip`  
+            - **Universal (works on both)**: `llama-swap-swiftbar-universal.zip`
+            
+            ## Installation
+            
+            ### Option 1: Shell Script Wrapper (Recommended)
+            
+            ```bash
+            # Download and extract bundle for your architecture
+            curl -L -o bundle.zip https://github.com/your-org/llama-swap-swiftbar-plugin/releases/latest/download/llama-swap-swiftbar-bundle-arm64.zip
+            unzip bundle.zip
+            
+            # Install binary
+            mkdir -p ~/.local/bin
+            cp llama-swap-swiftbar-* ~/.local/bin/llama-swap-swiftbar
+            chmod +x ~/.local/bin/llama-swap-swiftbar
+            
+            # Install wrapper script
+            cp llama-swap-swiftbar.sh ~/Library/Application\ Support/SwiftBar/
+            chmod +x ~/Library/Application\ Support/SwiftBar/llama-swap-swiftbar.sh
+            ```
+            
+            ### Option 2: Direct Binary
+            
+            ```bash
+            # Download, extract, and install binary directly
+            curl -L -o binary.zip https://github.com/your-org/llama-swap-swiftbar-plugin/releases/latest/download/llama-swap-swiftbar-arm64.zip
+            unzip binary.zip
+            cp llama-swap-swiftbar-* ~/Library/Application\ Support/SwiftBar/
+            chmod +x ~/Library/Application\ Support/SwiftBar/llama-swap-swiftbar-*
+            ```
+            
+            ## Verification
+            
+            Verify the download with checksums:
+            ```bash
+            shasum -a 256 -c checksums.txt
+            ```
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

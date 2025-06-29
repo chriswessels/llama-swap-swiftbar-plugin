@@ -21,12 +21,16 @@ llama-swap-swiftbar-plugin/
 │   ├── install_ux_tests.rs    # Installation user experience tests
 │   └── sleep_mechanism_tests.rs # Sleep/polling mechanism tests
 ├── assets/                    # Static assets
-│   └── llama-icon.png         # Base icon asset
+│   ├── llama-48.png           # Base 48px icon asset (dark)
+│   ├── llama-48-white.png     # Base 48px icon asset (light)
+│   ├── llama-derp.png         # Alternative icon (dark)
+│   └── llama-derp-white.png   # Alternative icon (light)
 ├── target/                    # Build output (gitignored)
 ├── .serena/                   # Serena project configuration
 ├── Cargo.toml                 # Rust package manifest
 ├── Cargo.lock                 # Dependency lock file
-└── README.md                  # Project readme
+├── README.md                  # Project readme
+└── .gitignore                 # Git ignore patterns
 ```
 
 ## Key Module Responsibilities
