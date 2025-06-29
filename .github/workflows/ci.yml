@@ -26,7 +26,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Cache Cargo dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/bin/
@@ -73,7 +73,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Cache Cargo dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/bin/
@@ -102,7 +102,7 @@ jobs:
           ls -la dist/
           
       - name: Upload artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: llama-swap-swiftbar-${{ matrix.arch }}
           path: dist/llama-swap-swiftbar-${{ matrix.arch }}
@@ -119,13 +119,13 @@ jobs:
         uses: actions/checkout@v4
         
       - name: Download ARM64 artifact
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: llama-swap-swiftbar-arm64
           path: ./artifacts
           
       - name: Download x64 artifact
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: llama-swap-swiftbar-x64
           path: ./artifacts
